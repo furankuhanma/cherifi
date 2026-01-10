@@ -11,10 +11,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Import routes
-const searchRoutes = require('./routes/search');
+const searchRoutes = require('./audio_cache/routes/search');
 const streamRoutes = require('./routes/stream');
 const aiRoutes = require('./routes/ai');
-const playlistRoutes = require('./routes/playlists');
+const playlistRoutes = require('./routes/playlist');
 
 // Middleware
 app.use(cors());

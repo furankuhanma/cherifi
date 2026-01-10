@@ -4,10 +4,10 @@ class Database {
   constructor() {
     this.pool = null;
     this.config = {
-      host: process.env.DB_HOST || 'localhost',
+      host: process.env.DB_HOST || '100.108.133.6',
       port: parseInt(process.env.DB_PORT) || 3306,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
+      user: process.env.DB_USER || 'vibestream',
+      password: process.env.DB_PASSWORD || 'home-server123',
       database: process.env.DB_NAME || 'vibestream',
       waitForConnections: true,
       connectionLimit: 10,
