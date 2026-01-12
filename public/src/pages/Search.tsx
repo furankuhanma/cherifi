@@ -15,8 +15,10 @@ const Search: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  
+  // Modal state
+  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
-  const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
   
   const { playTrack, setPlaylist } = usePlayer();
   const { isLiked, toggleLike } = useLikes();
@@ -71,22 +73,15 @@ const Search: React.FC = () => {
   };
 
   /**
-   * Handle category click
-   */
-  const handleCategoryClick = (categoryName: string) => {
-    setSearchQuery(categoryName.toLowerCase());
-  };
-
-  /**
    * Handle add to playlist
    */
   const handleAddToPlaylist = (track: Track) => {
     setSelectedTrack(track);
-    setIsAddToPlaylistOpen(true);
+    setIsPlaylistModalOpen(true);
   };
 
   /**
-   * Handle toggle like
+   * Handle like toggle
    */
   const handleToggleLike = (track: Track) => {
     toggleLike(track);
@@ -103,18 +98,25 @@ const Search: React.FC = () => {
     }
   };
 
+  /**
+   * Handle category click
+   */
+  const handleCategoryClick = (categoryName: string) => {
+    setSearchQuery(categoryName.toLowerCase());
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <h1 className="text-2xl md:text-3xl font-bold">Search</h1>
-
+      
       {/* Search Input */}
       <div className="relative sticky top-0 md:static z-30">
         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
           <SearchIcon className="text-zinc-500" size={20} />
         </div>
-        <input
-          type="text"
-          placeholder="What do you want to listen to?"
+        <input 
+          type="text" 
+          placeholder="What do you want to listen to?" 
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="w-full bg-white text-black py-3 pl-10 pr-4 rounded-full font-medium focus:outline-none placeholder-zinc-500"
@@ -136,7 +138,7 @@ const Search: React.FC = () => {
           {searchError && !isSearching && (
             <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 text-center">
               <p className="text-red-400">❌ {searchError}</p>
-              <button
+              <button 
                 onClick={() => handleSearch(searchQuery)}
                 className="mt-2 text-sm text-[#1DB954] hover:underline"
               >
@@ -161,10 +163,14 @@ const Search: React.FC = () => {
                 {searchResults.map((track) => (
                   <div
                     key={track.id}
-                    className="bg-zinc-900 bg-opacity-40 p-4 rounded-lg hover:bg-zinc-800 transition group cursor-pointer relative"
+                    className="bg-zinc-900 bg-opacity-40 p-4 rounded-lg hover:bg-zinc-800 transition group relative z-0 hover:z-50"
                   >
-                    {/* Three-dot menu - Top right */}
-                    <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition">
+                    {/* Three-dot menu - always visible, hides when playlist modal opens */}
+                    <div 
+                      className={`absolute top-2 right-2 z-10 transition-opacity duration-200 ${
+                        isPlaylistModalOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                      }`}
+                    >
                       <TrackOptionsMenu
                         track={track}
                         onAddToPlaylist={handleAddToPlaylist}
@@ -175,11 +181,15 @@ const Search: React.FC = () => {
                       />
                     </div>
 
-                    <div onClick={() => handleTrackClick(track)}>
+                    {/* Track card - clickable */}
+                    <div 
+                      onClick={() => handleTrackClick(track)}
+                      className="cursor-pointer"
+                    >
                       <div className="relative mb-4 aspect-square shadow-lg overflow-hidden rounded-md">
-                        <img
-                          src={track.coverUrl}
-                          alt={track.title}
+                        <img 
+                          src={track.coverUrl} 
+                          alt={track.title} 
                           className="object-cover w-full h-full transition duration-300 group-hover:scale-105"
                         />
                         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition flex items-center justify-center">
@@ -210,16 +220,16 @@ const Search: React.FC = () => {
           <h2 className="text-xl font-bold mt-8 mb-4">Browse all</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {CATEGORIES.map((category) => (
-              <div
-                key={category.id}
+              <div 
+                key={category.id} 
                 onClick={() => handleCategoryClick(category.name)}
                 className={`${category.color} aspect-[3/2] md:aspect-square p-4 rounded-lg relative overflow-hidden hover:scale-[1.02] transition cursor-pointer group`}
               >
                 <span className="text-xl font-bold">{category.name}</span>
-                <img
-                  src={`https://picsum.photos/seed/${category.id}/200/200`}
-                  alt=""
-                  className="absolute -bottom-4 -right-4 w-24 h-24 md:w-32 md:h-32 rotate-[25deg] shadow-xl group-hover:rotate-[15deg] transition duration-300"
+                <img 
+                  src={`https://picsum.photos/seed/${category.id}/200/200`} 
+                  alt="" 
+                  className="absolute -bottom-4 -right-4 w-24 h-24 md:w-32 md:h-32 rotate-[25deg] shadow-xl group-hover:rotate-[15deg] transition duration-300" 
                 />
               </div>
             ))}
@@ -229,9 +239,9 @@ const Search: React.FC = () => {
 
       {/* Add to Playlist Modal */}
       <AddToPlaylistModal
-        isOpen={isAddToPlaylistOpen}
+        isOpen={isPlaylistModalOpen}
         onClose={() => {
-          setIsAddToPlaylistOpen(false);
+          setIsPlaylistModalOpen(false);
           setSelectedTrack(null);
         }}
         track={selectedTrack}

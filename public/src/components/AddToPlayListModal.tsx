@@ -101,7 +101,7 @@ const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end md:items-center justify-center">
+    <div className="fixed inset-0 z-[999] flex items-end md:items-center justify-center">
       {/* Overlay */}
       <div 
         className="absolute inset-0 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
@@ -109,8 +109,7 @@ const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
       />
       
       {/* Modal */}
-      <div className="relative w-full max-w-md bg-zinc-900 rounded-t-2xl md:rounded-2xl animate-in slide-in-from-bottom md:slide-in-from-bottom-4 duration-300 max-h-[85vh] flex flex-col">
-        {/* Header */}
+      <div className="relative z-[1000] bg-zinc-900 rounded-xl p-6 w-full max-w-md">
         <div className="flex items-center justify-between p-6 border-b border-zinc-800">
           <div>
             <h2 className="text-xl font-bold">Add to Playlist</h2>
