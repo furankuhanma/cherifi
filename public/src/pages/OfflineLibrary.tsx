@@ -22,28 +22,29 @@ const OfflineLibrary: React.FC = () => {
     loadStorageInfo();
   }, [downloadedTracks]);
 
-  const loadStorageInfo = async () => {
-    setLoading(true);
+// --- In OfflineLibrary.tsx, update the loadStorageInfo function ---
+
+const loadStorageInfo = async () => {
+    // Only show the big loading spinner if we have no tracks cached in state yet
+    if (downloadedTracks.length === 0) setLoading(true);
+    
     try {
-      const info = await getStorageUsage();
-      setStorageInfo(info);
-    } catch (error) {
-      console.error('Failed to load storage info:', error);
+        const info = await getStorageUsage();
+        setStorageInfo(info);
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  };
+};
 
-  // Play a downloaded track
-  const handlePlayTrack = (trackId: string) => {
-    const track = downloadedTracks.find(dt => dt.track.id === trackId)?.track;
-    if (track) {
-      const trackList = downloadedTracks.map(dt => dt.track);
-      setPlaylist(trackList);
-      playTrack(track);
-    }
-  };
-
+// --- Update the handlePlayTrack to find by videoId or id ---
+const handlePlayTrack = (trackId: string) => {
+  const dtTrack = downloadedTracks.find(dt => dt.track.id === trackId || dt.track.videoId === trackId);
+  if (dtTrack) {
+    const trackList = downloadedTracks.map(dt => dt.track);
+    setPlaylist(trackList);
+    playTrack(dtTrack.track);
+  }
+};
   // Remove download with confirmation
   const handleRemoveDownload = async (trackId: string) => {
     const track = downloadedTracks.find(dt => dt.track.id === trackId)?.track;

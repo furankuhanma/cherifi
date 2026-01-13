@@ -38,7 +38,6 @@ interface HistoryCardProps {
   onAddToPlaylist: (track: Track) => void;
   onToggleLike: (track: Track) => void;
   onDownload: (track: Track) => void;
-  onDownloadMusic: (track: Track) => void;
   isLiked: boolean;
   isDownloaded: boolean;
   isPlaylistModalOpen: boolean;
@@ -49,7 +48,6 @@ const HistoryCard: React.FC<HistoryCardProps> = ({
   onAddToPlaylist,
   onToggleLike,
   onDownload,
-  onDownloadMusic,
   isLiked,
   isDownloaded,
   isPlaylistModalOpen
@@ -70,7 +68,6 @@ const HistoryCard: React.FC<HistoryCardProps> = ({
           onAddToPlaylist={onAddToPlaylist}
           onToggleLike={onToggleLike}
           onDownload={onDownload}
-          onDownloadMusic={onDownloadMusic}
           isLiked={isLiked}
           isDownloaded={isDownloaded}
         />
@@ -161,80 +158,19 @@ const Home: React.FC = () => {
   };
 
   /**
-   * Handle download for offline
+   * Handle download for offline (Spotify-style - saves to IndexedDB)
    */
   const handleDownload = async (track: Track) => {
     try {
+      console.log(`📥 Saving for offline: ${track.title}`);
       await downloadTrack(track);
-    } catch (error) {
-      console.error('Download failed:', error);
-    }
-  };
-
-  /**
-   * Handle download music file
-   */
-  /**
-     * Handle download music file (direct download to computer)
-     */
-  const handleDownloadMusic = async (track: Track) => {
-    try {
-      if (!track.videoId) {
-        throw new Error('No videoId');
-      }
-
-      console.log(`🎵 Starting download for: ${track.title}`);
-
-      const token = localStorage.getItem('auth_token');
-
-      const response = await fetch(`/api/stream/${track.videoId}`, {
-        headers: token
-          ? { Authorization: `Bearer ${token}` }
-          : {},
-      });
-
-      console.log('📡 Response status:', response.status);
-      console.log('📡 Response headers:', Object.fromEntries(response.headers.entries()));
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ Server error response:', errorText);
-        throw new Error(`Server error: ${errorText.substring(0, 200)}`);
-      }
-
-      // Check content type
-      const contentType = response.headers.get('content-type');
-      console.log('📡 Content-Type:', contentType);
-
-      if (!contentType || !contentType.includes('audio')) {
-        // Try to read response as text to see what we got
-        const responseText = await response.text();
-        console.error('❌ Non-audio response:', responseText.substring(0, 500));
-        throw new Error(`Expected audio, got: ${contentType}. Response: ${responseText.substring(0, 100)}`);
-      }
-
-      const blob = await response.blob();
-      console.log('✅ Blob created:', blob.size, 'bytes');
-
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-
-      link.href = url;
-      link.download = `${track.artist} - ${track.title}.mp3`;
-
-      document.body.appendChild(link);
-      link.click();
-
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      console.log('✅ Download triggered');
-
+      console.log(`✅ Track saved to offline library: ${track.title}`);
     } catch (error: any) {
-      console.error('❌ Music download failed:', error);
-      alert(`Failed to download audio file: ${error.message}`);
+      console.error('❌ Offline download failed:', error);
+      alert(`Failed to save for offline: ${error.message}`);
     }
   };
+
   return (
     <div className="space-y-10 animate-in fade-in duration-500">
       {/* 1. Greeting & Quick Grid */}
@@ -313,7 +249,6 @@ const Home: React.FC = () => {
                 onAddToPlaylist={handleAddToPlaylist}
                 onToggleLike={handleToggleLike}
                 onDownload={handleDownload}
-                onDownloadMusic={handleDownloadMusic}
                 isLiked={isLiked(track.id)}
                 isDownloaded={isDownloaded(track.id)}
                 isPlaylistModalOpen={isPlaylistModalOpen}

@@ -11,9 +11,9 @@ interface DownloadedTrack {
 
 interface DownloadProgress {
   trackId: string;
-  trackTitle: string; // NEW: Track title for display
-  trackArtist: string; // NEW: Track artist for display
-  coverUrl?: string; // NEW: Track cover for display
+  trackTitle: string;
+  trackArtist: string;
+  coverUrl?: string;
   progress: number; // 0-100
   status: 'downloading' | 'completed' | 'failed';
   error?: string;
@@ -66,10 +66,10 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
   const loadDownloadedTracks = async () => {
     try {
       const metadata = await offlineDB.getAllMetadata();
-
+      
       const tracks: DownloadedTrack[] = metadata.map(meta => ({
         track: {
-          id: meta.trackId,
+          id: meta.trackId || meta.videoId, 
           videoId: meta.videoId,
           title: meta.title,
           artist: meta.artist,
@@ -79,11 +79,10 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
           playCount: meta.playCount,
         },
         downloadedAt: meta.downloadedAt,
-        fileSize: 0, // Will be calculated if needed
+        fileSize: 0,
       }));
 
       setDownloadedTracks(tracks);
-      console.log(`✅ Loaded ${tracks.length} offline tracks`);
     } catch (error) {
       console.error('❌ Failed to load downloaded tracks:', error);
     }
@@ -156,14 +155,16 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         throw new Error(`Failed to fetch audio: ${errorText}`);
       }
 
-      // 🔒 CRITICAL: validate response type
+      // ✅ FIXED: Relaxed content-type validation
       const contentType = response.headers.get('content-type');
-
-      if (!contentType || !contentType.includes('audio')) {
+      
+      // Allow audio/* or application/octet-stream (common for proxied streams)
+      const isValidAudio = contentType?.includes('audio') || contentType?.includes('octet-stream');
+      
+      if (!isValidAudio && contentType?.includes('text/html')) {
         const errorText = await response.text();
-        throw new Error(`Invalid audio response: ${errorText}`);
+        throw new Error(`Proxy error: Received HTML instead of audio. ${errorText.substring(0, 200)}`);
       }
-
 
       // Get total file size
       const contentLength = response.headers.get('content-length');
@@ -197,26 +198,40 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         );
       }
 
-      // Combine chunks into single blob - FIX: Cast to BlobPart[]
-      const chunksArray = chunks as BlobPart[];
-      const audioBlob = new Blob(chunksArray, { type: 'audio/mpeg' });
-      console.log(`✅ Downloaded ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB`);
+      // ✅ FIXED: Combine chunks into single blob
+      const audioBlob = new Blob(chunks as BlobPart[], { type: contentType || 'audio/mpeg' });
+      const finalSize = audioBlob.size;
+
+      console.log(`💾 Saving to IndexedDB: ${track.title} (${(finalSize / 1024 / 1024).toFixed(2)} MB)`);
 
       // Save to IndexedDB
       await offlineDB.saveAudioFile(track.videoId, audioBlob);
-
+      
       // Save metadata
       await offlineDB.saveMetadata({
         videoId: track.videoId,
         trackId: track.id,
         title: track.title,
         artist: track.artist,
-        album: track.album,
-        coverUrl: track.coverUrl,
-        duration: track.duration,
+        album: track.album || 'Single',
+        coverUrl: track.coverUrl || '',
+        duration: track.duration || 0,
         downloadedAt: new Date().toISOString(),
         playCount: 0,
       });
+
+      // ✅ FIXED: Create downloaded track object (removed duplicate)
+      const downloadedTrack: DownloadedTrack = {
+        track: {
+          ...track,
+          id: track.id,
+        },
+        downloadedAt: new Date().toISOString(),
+        fileSize: finalSize,
+      };
+
+      // Add to downloaded tracks
+      setDownloadedTracks(prev => [...prev, downloadedTrack]);
 
       // Mark as completed
       setDownloadQueue(prev =>
@@ -226,15 +241,6 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
             : dq
         )
       );
-
-      // Add to downloaded tracks
-      const downloadedTrack: DownloadedTrack = {
-        track,
-        downloadedAt: new Date().toISOString(),
-        fileSize: audioBlob.size,
-      };
-
-      setDownloadedTracks(prev => [...prev, downloadedTrack]);
 
       console.log(`✅ Download completed: ${track.title}`);
 

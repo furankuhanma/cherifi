@@ -7,7 +7,6 @@ interface TrackOptionsMenuProps {
   onAddToPlaylist?: (track: Track) => void;
   onToggleLike?: (track: Track) => void;
   onDownload?: (track: Track) => void;
-  onDownloadMusic?: (track: Track) => void;
   isLiked?: boolean;
   isDownloaded?: boolean;
 }
@@ -17,7 +16,6 @@ const TrackOptionsMenu: React.FC<TrackOptionsMenuProps> = ({
   onAddToPlaylist,
   onToggleLike,
   onDownload,
-  onDownloadMusic,
   isLiked = false,
   isDownloaded = false,
 }) => {
@@ -170,27 +168,47 @@ const TrackOptionsMenu: React.FC<TrackOptionsMenuProps> = ({
                 </button>
               )}
 
-              {/* Download Music - NEW */}
-              {onDownloadMusic && (
+              {/* Download Music - NOW SAVES TO INDEXEDDB (Spotify-style) */}
+              {onDownload && (
                 <button
-                  onClick={() => handleMenuAction(() => onDownloadMusic(track))}
-                  className="w-full px-4 py-3 hover:bg-zinc-800 transition flex items-center gap-3 text-left group"
+                  onClick={() => handleMenuAction(() => onDownload(track))}
+                  className={`w-full px-4 py-3 transition flex items-center gap-3 text-left group ${
+                    isDownloaded ? 'opacity-75' : 'hover:bg-zinc-800'
+                  }`}
+                  disabled={isDownloaded}
                 >
-                  <div className="bg-zinc-800 group-hover:bg-zinc-700 p-2 rounded transition">
-                    <Music2 size={18} className="text-zinc-400 group-hover:text-white" />
+                  <div className={`p-2 rounded transition ${
+                    isDownloaded 
+                      ? 'bg-[#1DB954]/20' 
+                      : 'bg-zinc-800 group-hover:bg-zinc-700'
+                  }`}>
+                    <Music2 
+                      size={18} 
+                      className={`transition ${
+                        isDownloaded 
+                          ? 'text-[#1DB954]' 
+                          : 'text-zinc-400 group-hover:text-white'
+                      }`}
+                    />
                   </div>
                   <div>
-                    <p className="font-medium text-sm">Download Music</p>
-                    <p className="text-xs text-zinc-500">Save audio file to device</p>
+                    <p className="font-medium text-sm">
+                      {isDownloaded ? 'Available Offline' : 'Download Music'}
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      {isDownloaded ? 'Saved in your library' : 'Save for offline listening'}
+                    </p>
                   </div>
                 </button>
               )}
 
-              {/* Download for Offline */}
+              {/* Download for Offline - ALSO SAVES TO INDEXEDDB (same function) */}
               {onDownload && (
                 <button
                   onClick={() => handleMenuAction(() => onDownload(track))}
-                  className="w-full px-4 py-3 hover:bg-zinc-800 transition flex items-center gap-3 text-left group"
+                  className={`w-full px-4 py-3 transition flex items-center gap-3 text-left group ${
+                    isDownloaded ? 'opacity-75' : 'hover:bg-zinc-800'
+                  }`}
                   disabled={isDownloaded}
                 >
                   <div className={`p-2 rounded transition ${
@@ -209,10 +227,10 @@ const TrackOptionsMenu: React.FC<TrackOptionsMenuProps> = ({
                   </div>
                   <div>
                     <p className="font-medium text-sm">
-                      {isDownloaded ? 'Downloaded' : 'Download for Offline'}
+                      {isDownloaded ? 'Available Offline' : 'Download for Offline'}
                     </p>
                     <p className="text-xs text-zinc-500">
-                      {isDownloaded ? 'Available offline' : 'Listen without internet'}
+                      {isDownloaded ? 'Saved in your library' : 'Listen without internet'}
                     </p>
                   </div>
                 </button>
