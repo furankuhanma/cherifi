@@ -1,12 +1,20 @@
 import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Home, Search, Library, Plus, Heart, Music2, PlusCircle, Send, User } from 'lucide-react';
-import Player from '../components/Player';
-import CreateModal from './CreateModal';
-import UserProfileMenu from './UserProfile';
+import { Home, Search, Library, Plus, Heart, Music2, PlusCircle, Send, User, Download } from 'lucide-react';
+import { useDownloads } from '../context/DownloadContext';
+
+// Mock components - replace with your actual imports
+const Player = () => <div />;
+const CreateModal = ({ isOpen, onClose }: any) => null;
+const UserProfileMenu = ({ isOpen, onClose }: any) => null;
+const DownloadProgressToast = () => <div />;
 
 const Sidebar = () => {
   const navigate = useNavigate();
+  const { downloadQueue } = useDownloads();
+  
+  // Count active downloads
+  const activeDownloads = downloadQueue.filter(d => d.status === 'downloading').length;
   
   return (
     <aside className="hidden md:flex flex-col w-64 bg-black p-6 gap-8 h-screen sticky top-0 border-r border-zinc-800">
@@ -34,6 +42,20 @@ const Sidebar = () => {
         >
           <Library size={24} /> Your Library
         </NavLink>
+        <NavLink 
+          to="/offline" 
+          className={({ isActive }) => `flex items-center gap-4 hover:text-white transition relative ${isActive ? 'text-white' : ''}`}
+        >
+          <div className="relative">
+            <Download size={24} />
+            {activeDownloads > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center animate-pulse">
+                {activeDownloads}
+              </span>
+            )}
+          </div>
+          Offline
+        </NavLink>
       </nav>
 
       <div className="flex flex-col gap-4 mt-4">
@@ -59,25 +81,43 @@ const Sidebar = () => {
   );
 };
 
-const BottomNav = ({ onCreateOpen }: { onCreateOpen: () => void }) => (
-  <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-900 bg-opacity-95 backdrop-blur-md border-t border-zinc-800 flex justify-around py-3 z-50">
-    <NavLink to="/" className={({ isActive }) => `flex flex-col items-center gap-1 text-[10px] ${isActive ? 'text-white' : 'text-zinc-400'}`}>
-      <Home size={24} /> <span>Home</span>
-    </NavLink>
-    <NavLink to="/search" className={({ isActive }) => `flex flex-col items-center gap-1 text-[10px] ${isActive ? 'text-white' : 'text-zinc-400'}`}>
-      <Search size={24} /> <span>Search</span>
-    </NavLink>
-    <button 
-      onClick={onCreateOpen}
-      className="flex flex-col items-center gap-1 text-[10px] text-zinc-400 hover:text-white transition"
-    >
-      <PlusCircle size={24} className="text-[#1DB954]" /> <span>Create</span>
-    </button>
-    <NavLink to="/library" className={({ isActive }) => `flex flex-col items-center gap-1 text-[10px] ${isActive ? 'text-white' : 'text-zinc-400'}`}>
-      <Library size={24} /> <span>Library</span>
-    </NavLink>
-  </nav>
-);
+const BottomNav = ({ onCreateOpen }: { onCreateOpen: () => void }) => {
+  const { downloadQueue } = useDownloads();
+  
+  // Count active downloads
+  const activeDownloads = downloadQueue.filter(d => d.status === 'downloading').length;
+  
+  return (
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-900 bg-opacity-95 backdrop-blur-md border-t border-zinc-800 flex justify-around py-3 z-50">
+      <NavLink to="/" className={({ isActive }) => `flex flex-col items-center gap-1 text-[10px] ${isActive ? 'text-white' : 'text-zinc-400'}`}>
+        <Home size={24} /> <span>Home</span>
+      </NavLink>
+      <NavLink to="/search" className={({ isActive }) => `flex flex-col items-center gap-1 text-[10px] ${isActive ? 'text-white' : 'text-zinc-400'}`}>
+        <Search size={24} /> <span>Search</span>
+      </NavLink>
+      <NavLink to="/offline" className={({ isActive }) => `flex flex-col items-center gap-1 text-[10px] relative ${isActive ? 'text-white' : 'text-zinc-400'}`}>
+        <div className="relative">
+          <Download size={24} />
+          {activeDownloads > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center animate-pulse">
+              {activeDownloads}
+            </span>
+          )}
+        </div>
+        <span>Offline</span>
+      </NavLink>
+      <button 
+        onClick={onCreateOpen}
+        className="flex flex-col items-center gap-1 text-[10px] text-zinc-400 hover:text-white transition"
+      >
+        <PlusCircle size={24} className="text-[#1DB954]" /> <span>Create</span>
+      </button>
+      <NavLink to="/library" className={({ isActive }) => `flex flex-col items-center gap-1 text-[10px] ${isActive ? 'text-white' : 'text-zinc-400'}`}>
+        <Library size={24} /> <span>Library</span>
+      </NavLink>
+    </nav>
+  );
+};
 
 const Layout: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -120,6 +160,7 @@ const Layout: React.FC = () => {
       </main>
       
       <Player />
+      <DownloadProgressToast />
       <BottomNav onCreateOpen={() => setIsCreateOpen(true)} />
       <CreateModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
       <UserProfileMenu 

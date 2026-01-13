@@ -3,19 +3,29 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Play, Heart, MoreHorizontal, Clock, ArrowLeft, Trash2, Edit2, RefreshCw, Loader } from 'lucide-react';
 import { usePlayer } from '../context/PlayerContext';
 import { useLibrary } from '../context/LibraryContext';
+import { useLikes } from '../context/LikeContext';
+import { useDownloads } from '../context/DownloadContext';
 import { playlistAPI } from '../services/api';
-import { Playlist } from '../types/types';
+import { Playlist, Track } from '../types/types';
+import TrackOptionsMenu from '../components/TrackOptionsMenu';
+import AddToPlaylistModal from '../components/AddToPlayListModal';
 
 const PlaylistDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { playTrack, currentTrack, isPlaying, setPlaylist: setPlayerPlaylist } = usePlayer();
   const { playlists, refreshPlaylists } = useLibrary();
+  const { isLiked, toggleLike } = useLikes();
+  const { isDownloaded, downloadTrack } = useDownloads();
   
   const [playlist, setPlaylist] = useState<Playlist | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Modal state
+  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState(false);
+  const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
 
   // Load playlist from backend on mount and when id changes
   useEffect(() => {
@@ -85,6 +95,66 @@ const PlaylistDetail: React.FC = () => {
     console.log(`▶️ Playing track: ${playlist.tracks[index].title}`);
     setPlayerPlaylist(playlist.tracks);
     playTrack(playlist.tracks[index]);
+  };
+
+  /**
+   * Handle add to playlist
+   */
+  const handleAddToPlaylist = (track: Track) => {
+    setSelectedTrack(track);
+    setIsPlaylistModalOpen(true);
+  };
+
+  /**
+   * Handle like toggle
+   */
+  const handleToggleLike = (track: Track) => {
+    toggleLike(track);
+  };
+
+  /**
+   * Handle download for offline
+   */
+  const handleDownload = async (track: Track) => {
+    try {
+      await downloadTrack(track);
+    } catch (error) {
+      console.error('Download failed:', error);
+    }
+  };
+
+  /**
+   * Handle download music file
+   */
+  const handleDownloadMusic = async (track: Track) => {
+    try {
+      console.log(`🎵 Downloading music file: ${track.title}`);
+      
+      if (!track.videoId) {
+        console.error('❌ No videoId available for download');
+        return;
+      }
+      
+      const response = await fetch(`/api/stream/${track.videoId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch stream URL');
+      }
+      
+      const streamData = await response.json();
+      
+      const link = document.createElement('a');
+      link.href = streamData.url;
+      link.download = `${track.artist} - ${track.title}.mp3`;
+      link.target = '_blank';
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      console.log('✅ Music download started');
+    } catch (error) {
+      console.error('❌ Music download failed:', error);
+    }
   };
 
   /**
@@ -212,11 +282,13 @@ const PlaylistDetail: React.FC = () => {
       {/* Track List */}
       <div className="bg-black bg-opacity-20 md:bg-transparent rounded-lg">
         {/* Header (Desktop) */}
-        <div className="hidden md:grid grid-cols-[16px_1fr_1fr_40px] gap-4 px-4 py-2 border-b border-zinc-800 text-zinc-400 text-sm mb-4">
+        <div className="hidden md:grid grid-cols-[16px_1fr_1fr_80px] gap-4 px-4 py-2 border-b border-zinc-800 text-zinc-400 text-sm mb-4">
           <span>#</span>
           <span>Title</span>
           <span>Album</span>
-          <div className="flex justify-end"><Clock size={16} /></div>
+          <div className="flex justify-end items-center gap-2">
+            <Clock size={16} />
+          </div>
         </div>
 
         {/* Tracks */}
@@ -227,8 +299,7 @@ const PlaylistDetail: React.FC = () => {
               return (
                 <div 
                   key={track.id}
-                  onClick={() => handlePlayTrack(index)}
-                  className={`grid grid-cols-[auto_1fr_40px] md:grid-cols-[16px_1fr_1fr_40px] items-center gap-4 px-4 py-3 rounded-md hover:bg-zinc-800 transition cursor-pointer group ${
+                  className={`grid grid-cols-[auto_1fr_40px] md:grid-cols-[16px_1fr_1fr_80px] items-center gap-4 px-4 py-3 rounded-md hover:bg-zinc-800 transition group relative z-0 hover:z-50 ${
                     isCurrent ? 'bg-zinc-800/50' : ''
                   }`}
                 >
@@ -244,7 +315,11 @@ const PlaylistDetail: React.FC = () => {
                     )}
                   </span>
                   
-                  <div className="flex items-center gap-4 overflow-hidden">
+                  {/* Track Info - Clickable */}
+                  <div 
+                    className="flex items-center gap-4 overflow-hidden cursor-pointer"
+                    onClick={() => handlePlayTrack(index)}
+                  >
                     <div className="relative w-10 h-10 md:hidden rounded overflow-hidden flex-shrink-0">
                       <img src={track.coverUrl} alt="" className="object-cover w-full h-full" />
                       {isCurrent && isPlaying && (
@@ -265,10 +340,39 @@ const PlaylistDetail: React.FC = () => {
                     </div>
                   </div>
 
-                  <span className="hidden md:inline text-sm text-zinc-400 truncate">{track.album}</span>
+                  <span 
+                    className="hidden md:inline text-sm text-zinc-400 truncate cursor-pointer"
+                    onClick={() => handlePlayTrack(index)}
+                  >
+                    {track.album}
+                  </span>
 
-                  <div className="text-xs text-zinc-400 text-right">
-                    {formatDuration(track.duration)}
+                  {/* Duration and Menu */}
+                  <div className="flex items-center justify-end gap-2">
+                    <span 
+                      className="text-xs text-zinc-400 cursor-pointer"
+                      onClick={() => handlePlayTrack(index)}
+                    >
+                      {formatDuration(track.duration)}
+                    </span>
+                    
+                    {/* Three-dot menu */}
+                    <div 
+                      className={`transition-opacity duration-200 ${
+                        isPlaylistModalOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                      }`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <TrackOptionsMenu
+                        track={track}
+                        onAddToPlaylist={handleAddToPlaylist}
+                        onToggleLike={handleToggleLike}
+                        onDownload={handleDownload}
+                        onDownloadMusic={handleDownloadMusic}
+                        isLiked={isLiked(track.id)}
+                        isDownloaded={isDownloaded(track.id)}
+                      />
+                    </div>
                   </div>
                 </div>
               );
@@ -306,6 +410,16 @@ const PlaylistDetail: React.FC = () => {
           )}
         </div>
       )}
+
+      {/* Add to Playlist Modal */}
+      <AddToPlaylistModal
+        isOpen={isPlaylistModalOpen}
+        onClose={() => {
+          setIsPlaylistModalOpen(false);
+          setSelectedTrack(null);
+        }}
+        track={selectedTrack}
+      />
     </div>
   );
 };

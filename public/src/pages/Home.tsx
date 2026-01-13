@@ -4,7 +4,11 @@ import { Play } from 'lucide-react';
 import { Playlist, Track } from '../types/types';
 import { usePlayer } from '../context/PlayerContext';
 import { useLibrary } from '../context/LibraryContext';
+import { useLikes } from '../context/LikeContext';
+import { useDownloads } from '../context/DownloadContext';
 import { searchAPI } from '../services/api';
+import TrackOptionsMenu from '../components/TrackOptionsMenu';
+import AddToPlaylistModal from '../components/AddToPlayListModal';
 
 interface PlaylistCardProps {
   playlist: Playlist;
@@ -13,7 +17,7 @@ interface PlaylistCardProps {
 const PlaylistCard: React.FC<PlaylistCardProps> = ({ playlist }) => {
   const navigate = useNavigate();
   return (
-    <div 
+    <div
       onClick={() => navigate(`/playlist/${playlist.id}`)}
       className="bg-zinc-900 bg-opacity-40 p-4 rounded-lg hover:bg-zinc-800 transition group cursor-pointer w-[160px] md:w-[200px] flex-shrink-0"
     >
@@ -31,25 +35,60 @@ const PlaylistCard: React.FC<PlaylistCardProps> = ({ playlist }) => {
 
 interface HistoryCardProps {
   track: Track;
+  onAddToPlaylist: (track: Track) => void;
+  onToggleLike: (track: Track) => void;
+  onDownload: (track: Track) => void;
+  onDownloadMusic: (track: Track) => void;
+  isLiked: boolean;
+  isDownloaded: boolean;
+  isPlaylistModalOpen: boolean;
 }
 
-const HistoryCard: React.FC<HistoryCardProps> = ({ track }) => {
+const HistoryCard: React.FC<HistoryCardProps> = ({
+  track,
+  onAddToPlaylist,
+  onToggleLike,
+  onDownload,
+  onDownloadMusic,
+  isLiked,
+  isDownloaded,
+  isPlaylistModalOpen
+}) => {
   const { playTrack } = usePlayer();
+
   return (
-    <div 
-      onClick={() => playTrack(track)}
-      className="bg-zinc-900 bg-opacity-40 p-3 rounded-lg hover:bg-zinc-800 transition group cursor-pointer w-[140px] md:w-[180px] flex-shrink-0"
+    <div
+      className="bg-zinc-900 bg-opacity-40 p-3 rounded-lg hover:bg-zinc-800 transition group cursor-pointer w-[140px] md:w-[180px] flex-shrink-0 relative z-0 hover:z-50"
     >
-      <div className="relative mb-3 aspect-square shadow-md overflow-hidden rounded-lg">
-        <img src={track.coverUrl} alt={track.title} className="object-cover w-full h-full transition duration-500 group-hover:scale-105" />
-        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-300 flex items-center justify-center">
+      {/* Three-dot menu */}
+      <div
+        className={`absolute top-2 right-2 z-10 transition-opacity duration-200 ${isPlaylistModalOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          }`}
+      >
+        <TrackOptionsMenu
+          track={track}
+          onAddToPlaylist={onAddToPlaylist}
+          onToggleLike={onToggleLike}
+          onDownload={onDownload}
+          onDownloadMusic={onDownloadMusic}
+          isLiked={isLiked}
+          isDownloaded={isDownloaded}
+        />
+      </div>
+
+      {/* Track card content */}
+      <div onClick={() => playTrack(track)}>
+        <div className="relative mb-3 aspect-square shadow-md overflow-hidden rounded-lg">
+          <img src={track.coverUrl} alt={track.title} className="object-cover w-full h-full transition duration-500 group-hover:scale-105" />
+          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-300 flex items-center justify-center">
             <button className="bg-[#1DB954] p-3 rounded-full shadow-2xl opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 transition duration-300">
               <Play size={20} className="text-black fill-current" />
             </button>
+          </div>
         </div>
+        <h3 className="font-bold text-xs md:text-sm truncate text-white">{track.title}</h3>
+        <p className="text-[10px] md:text-xs text-zinc-400 truncate mt-0.5">{track.artist}</p>
       </div>
-      <h3 className="font-bold text-xs md:text-sm truncate text-white">{track.title}</h3>
-      <p className="text-[10px] md:text-xs text-zinc-400 truncate mt-0.5">{track.artist}</p>
     </div>
   );
 };
@@ -57,13 +96,19 @@ const HistoryCard: React.FC<HistoryCardProps> = ({ track }) => {
 const Home: React.FC = () => {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  
+
   const { playlists, isLoading: playlistsLoading } = useLibrary();
   const { setPlaylist } = usePlayer();
-  
+  const { isLiked, toggleLike } = useLikes();
+  const { isDownloaded, downloadTrack } = useDownloads();
+
   const [trendingTracks, setTrendingTracks] = useState<Track[]>([]);
   const [isLoadingTrending, setIsLoadingTrending] = useState(false);
   const [trendingError, setTrendingError] = useState<string | null>(null);
+
+  // Modal state
+  const [isPlaylistModalOpen, setIsPlaylistModalOpen] = useState(false);
+  const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
 
   // Load trending music on mount
   useEffect(() => {
@@ -100,12 +145,102 @@ const Home: React.FC = () => {
     }
   };
 
+  /**
+   * Handle add to playlist
+   */
+  const handleAddToPlaylist = (track: Track) => {
+    setSelectedTrack(track);
+    setIsPlaylistModalOpen(true);
+  };
+
+  /**
+   * Handle like toggle
+   */
+  const handleToggleLike = (track: Track) => {
+    toggleLike(track);
+  };
+
+  /**
+   * Handle download for offline
+   */
+  const handleDownload = async (track: Track) => {
+    try {
+      await downloadTrack(track);
+    } catch (error) {
+      console.error('Download failed:', error);
+    }
+  };
+
+  /**
+   * Handle download music file
+   */
+  /**
+     * Handle download music file (direct download to computer)
+     */
+  const handleDownloadMusic = async (track: Track) => {
+    try {
+      if (!track.videoId) {
+        throw new Error('No videoId');
+      }
+
+      console.log(`🎵 Starting download for: ${track.title}`);
+
+      const token = localStorage.getItem('auth_token');
+
+      const response = await fetch(`/api/stream/${track.videoId}`, {
+        headers: token
+          ? { Authorization: `Bearer ${token}` }
+          : {},
+      });
+
+      console.log('📡 Response status:', response.status);
+      console.log('📡 Response headers:', Object.fromEntries(response.headers.entries()));
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Server error response:', errorText);
+        throw new Error(`Server error: ${errorText.substring(0, 200)}`);
+      }
+
+      // Check content type
+      const contentType = response.headers.get('content-type');
+      console.log('📡 Content-Type:', contentType);
+
+      if (!contentType || !contentType.includes('audio')) {
+        // Try to read response as text to see what we got
+        const responseText = await response.text();
+        console.error('❌ Non-audio response:', responseText.substring(0, 500));
+        throw new Error(`Expected audio, got: ${contentType}. Response: ${responseText.substring(0, 100)}`);
+      }
+
+      const blob = await response.blob();
+      console.log('✅ Blob created:', blob.size, 'bytes');
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = url;
+      link.download = `${track.artist} - ${track.title}.mp3`;
+
+      document.body.appendChild(link);
+      link.click();
+
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      console.log('✅ Download triggered');
+
+    } catch (error: any) {
+      console.error('❌ Music download failed:', error);
+      alert(`Failed to download audio file: ${error.message}`);
+    }
+  };
   return (
     <div className="space-y-10 animate-in fade-in duration-500">
       {/* 1. Greeting & Quick Grid */}
       <header>
         <h1 className="text-2xl md:text-4xl font-black mb-6 tracking-tight">{greeting}</h1>
-        
+
         {playlistsLoading ? (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -115,8 +250,8 @@ const Home: React.FC = () => {
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
             {playlists.slice(0, 6).map((playlist) => (
-              <div 
-                key={playlist.id} 
+              <div
+                key={playlist.id}
                 className="flex items-center gap-3 bg-white bg-opacity-5 rounded overflow-hidden hover:bg-white hover:bg-opacity-10 transition-all cursor-pointer group h-14 md:h-20"
                 onClick={() => handleQuickPlaylistClick(playlist)}
               >
@@ -136,7 +271,7 @@ const Home: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl md:text-2xl font-bold tracking-tight">Trending Now</h2>
           {!isLoadingTrending && !trendingError && (
-            <button 
+            <button
               onClick={loadTrending}
               className="text-xs font-bold text-zinc-400 hover:text-white hover:underline"
             >
@@ -160,7 +295,7 @@ const Home: React.FC = () => {
         {trendingError && (
           <div className="bg-red-900/20 border border-red-500 rounded-lg p-4 text-center">
             <p className="text-red-400">❌ {trendingError}</p>
-            <button 
+            <button
               onClick={loadTrending}
               className="mt-2 text-sm text-[#1DB954] hover:underline"
             >
@@ -171,7 +306,19 @@ const Home: React.FC = () => {
 
         {!isLoadingTrending && !trendingError && trendingTracks.length > 0 && (
           <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth">
-            {trendingTracks.slice(0, 10).map(track => <HistoryCard key={track.id} track={track} />)}
+            {trendingTracks.slice(0, 10).map(track => (
+              <HistoryCard
+                key={track.id}
+                track={track}
+                onAddToPlaylist={handleAddToPlaylist}
+                onToggleLike={handleToggleLike}
+                onDownload={handleDownload}
+                onDownloadMusic={handleDownloadMusic}
+                isLiked={isLiked(track.id)}
+                isDownloaded={isDownloaded(track.id)}
+                isPlaylistModalOpen={isPlaylistModalOpen}
+              />
+            ))}
           </div>
         )}
 
@@ -185,7 +332,7 @@ const Home: React.FC = () => {
       {/* 3. Made for You */}
       <section>
         <h2 className="text-xl md:text-2xl font-bold mb-4 tracking-tight">Your Playlists</h2>
-        
+
         {playlistsLoading ? (
           <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0">
             {[1, 2, 3, 4].map((i) => (
@@ -219,6 +366,16 @@ const Home: React.FC = () => {
           </div>
         </section>
       )}
+
+      {/* Add to Playlist Modal */}
+      <AddToPlaylistModal
+        isOpen={isPlaylistModalOpen}
+        onClose={() => {
+          setIsPlaylistModalOpen(false);
+          setSelectedTrack(null);
+        }}
+        track={selectedTrack}
+      />
     </div>
   );
 };

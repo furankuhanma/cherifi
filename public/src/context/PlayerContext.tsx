@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Track } from '../types/types';
 import { streamAPI } from '../services/api';
+import { useDownloads } from './DownloadContext';
 
 interface PlayerContextType {
   currentTrack: Track | null;
@@ -15,6 +16,7 @@ interface PlayerContextType {
   seek: (seconds: number) => void;
   playlist: Track[];
   setPlaylist: (tracks: Track[]) => void;
+  isPlayingOffline: boolean; // NEW: Track if current playback is offline
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -25,9 +27,16 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [progress, setProgress] = useState(0);
   const [volume, setVolumeState] = useState(0.8);
   const [playlist, setPlaylist] = useState<Track[]>([]);
+  const [isPlayingOffline, setIsPlayingOffline] = useState(false); // NEW
+
+  // Get download functions
+  const { isDownloaded, getOfflineAudioUrl } = useDownloads();
 
   // Audio element ref
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Keep track of current object URL for cleanup
+  const currentObjectUrlRef = useRef<string | null>(null);
 
   // Initialize audio element
   useEffect(() => {
@@ -48,6 +57,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.pause();
       audio.src = '';
+      
+      // Cleanup object URL
+      if (currentObjectUrlRef.current) {
+        URL.revokeObjectURL(currentObjectUrlRef.current);
+        currentObjectUrlRef.current = null;
+      }
     };
   }, []);
 
@@ -68,7 +83,20 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const handleAudioError = (e: Event) => {
     console.error('❌ Audio playback error:', e);
     setIsPlaying(false);
-    // Could show toast notification here
+    
+    // If offline playback failed, try online as fallback
+    if (isPlayingOffline && currentTrack?.videoId) {
+      console.log('🔄 Offline playback failed, trying online stream...');
+      setIsPlayingOffline(false);
+      const streamUrl = streamAPI.getStreamUrl(currentTrack.videoId);
+      if (audioRef.current) {
+        audioRef.current.src = streamUrl;
+        audioRef.current.load();
+        audioRef.current.play().catch(err => {
+          console.error('❌ Online playback also failed:', err);
+        });
+      }
+    }
   };
 
   // Handle loaded metadata
@@ -77,7 +105,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   // Play a track
-  const playTrack = useCallback((track: Track) => {
+  const playTrack = useCallback(async (track: Track) => {
     if (!track || !track.videoId) {
       console.error('❌ Invalid track data');
       return;
@@ -87,7 +115,59 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCurrentTrack(track);
     setProgress(0);
 
-    // Get stream URL from backend
+    // Cleanup previous object URL if exists
+    if (currentObjectUrlRef.current) {
+      URL.revokeObjectURL(currentObjectUrlRef.current);
+      currentObjectUrlRef.current = null;
+    }
+
+    // Check if track is downloaded for offline playback
+    if (track.videoId && isDownloaded(track.id)) {
+      try {
+        console.log('🔌 Attempting offline playback...');
+        const offlineUrl = await getOfflineAudioUrl(track.videoId);
+        
+        if (offlineUrl) {
+          console.log('🔌 Playing offline:', track.title);
+          setIsPlayingOffline(true);
+          currentObjectUrlRef.current = offlineUrl; // Store for cleanup
+          
+          if (audioRef.current) {
+            audioRef.current.src = offlineUrl;
+            audioRef.current.load();
+            
+            // Play audio
+            audioRef.current.play()
+              .then(() => {
+                setIsPlaying(true);
+                console.log('✅ Offline playback started');
+              })
+              .catch((error) => {
+                console.error('❌ Offline playback failed:', error);
+                setIsPlaying(false);
+                setIsPlayingOffline(false);
+                
+                // Fallback to online stream
+                console.log('🌐 Falling back to online stream...');
+                const streamUrl = streamAPI.getStreamUrl(track.videoId);
+                audioRef.current!.src = streamUrl;
+                audioRef.current!.load();
+                audioRef.current!.play().catch(err => {
+                  console.error('❌ Online fallback also failed:', err);
+                });
+              });
+          }
+          return; // Exit early for offline playback
+        }
+      } catch (error) {
+        console.error('❌ Failed to get offline audio:', error);
+        setIsPlayingOffline(false);
+      }
+    }
+
+    // Play online (either not downloaded or offline failed)
+    console.log('🌐 Playing online:', track.title);
+    setIsPlayingOffline(false);
     const streamUrl = streamAPI.getStreamUrl(track.videoId);
     
     if (audioRef.current) {
@@ -98,14 +178,14 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       audioRef.current.play()
         .then(() => {
           setIsPlaying(true);
-          console.log('✅ Playback started');
+          console.log('✅ Online playback started');
         })
         .catch((error) => {
-          console.error('❌ Playback failed:', error);
+          console.error('❌ Online playback failed:', error);
           setIsPlaying(false);
         });
     }
-  }, []);
+  }, [isDownloaded, getOfflineAudioUrl]);
 
   // Toggle play/pause
   const togglePlay = useCallback(() => {
@@ -175,6 +255,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [volume]);
 
+  // Cleanup object URL when component unmounts or track changes
+  useEffect(() => {
+    return () => {
+      if (currentObjectUrlRef.current) {
+        URL.revokeObjectURL(currentObjectUrlRef.current);
+      }
+    };
+  }, [currentTrack]);
+
   return (
     <PlayerContext.Provider
       value={{
@@ -190,6 +279,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         seek,
         playlist,
         setPlaylist,
+        isPlayingOffline, // NEW: Expose offline status
       }}
     >
       {children}

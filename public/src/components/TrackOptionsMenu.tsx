@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MoreVertical, Plus, Heart, Download, ListMusic, X } from 'lucide-react';
+import { MoreVertical, Plus, Heart, Download, Music2, X } from 'lucide-react';
 import { Track } from '../types/types';
 
 interface TrackOptionsMenuProps {
@@ -7,6 +7,7 @@ interface TrackOptionsMenuProps {
   onAddToPlaylist?: (track: Track) => void;
   onToggleLike?: (track: Track) => void;
   onDownload?: (track: Track) => void;
+  onDownloadMusic?: (track: Track) => void;
   isLiked?: boolean;
   isDownloaded?: boolean;
 }
@@ -16,6 +17,7 @@ const TrackOptionsMenu: React.FC<TrackOptionsMenuProps> = ({
   onAddToPlaylist,
   onToggleLike,
   onDownload,
+  onDownloadMusic,
   isLiked = false,
   isDownloaded = false,
 }) => {
@@ -164,6 +166,22 @@ const TrackOptionsMenu: React.FC<TrackOptionsMenuProps> = ({
                     <p className="text-xs text-zinc-500">
                       {isLiked ? 'Remove from your favorites' : 'Add to your favorites'}
                     </p>
+                  </div>
+                </button>
+              )}
+
+              {/* Download Music - NEW */}
+              {onDownloadMusic && (
+                <button
+                  onClick={() => handleMenuAction(() => onDownloadMusic(track))}
+                  className="w-full px-4 py-3 hover:bg-zinc-800 transition flex items-center gap-3 text-left group"
+                >
+                  <div className="bg-zinc-800 group-hover:bg-zinc-700 p-2 rounded transition">
+                    <Music2 size={18} className="text-zinc-400 group-hover:text-white" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm">Download Music</p>
+                    <p className="text-xs text-zinc-500">Save audio file to device</p>
                   </div>
                 </button>
               )}

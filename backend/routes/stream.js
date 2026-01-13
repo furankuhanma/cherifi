@@ -17,7 +17,7 @@ router.get('/:videoId', async (req, res) => {
   try {
     // Validate videoId format
     if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid video ID',
         message: 'Video ID must be 11 characters (YouTube format)'
       });
@@ -31,7 +31,7 @@ router.get('/:videoId', async (req, res) => {
 
     // Check if file exists
     if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Audio file not found',
         message: 'The audio file could not be located on the server'
       });
@@ -56,8 +56,10 @@ router.get('/:videoId', async (req, res) => {
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': 'audio/mpeg',
-        'Cache-Control': 'public, max-age=86400', // Cache for 24 hours
+        'Cache-Control': 'public, max-age=86400',
+        'X-Content-Type-Options': 'nosniff',
       });
+
 
       fileStream.pipe(res);
     } else {
@@ -67,7 +69,9 @@ router.get('/:videoId', async (req, res) => {
         'Content-Type': 'audio/mpeg',
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'public, max-age=86400',
+        'X-Content-Type-Options': 'nosniff',
       });
+
 
       const fileStream = fs.createReadStream(filePath);
       fileStream.pipe(res);
@@ -77,13 +81,13 @@ router.get('/:videoId', async (req, res) => {
 
   } catch (error) {
     console.error(`❌ Stream error for ${videoId}:`, error);
-    
+
     // Don't send headers if already sent
     if (res.headersSent) {
       return res.end();
     }
 
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Streaming failed',
       message: error.message,
       videoId: videoId
@@ -119,9 +123,9 @@ router.get('/info/:videoId', async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to get audio info',
-      message: error.message 
+      message: error.message
     });
   }
 });
@@ -137,21 +141,21 @@ router.delete('/:videoId', async (req, res) => {
     const deleted = await audioService.deleteAudio(videoId);
 
     if (deleted) {
-      res.json({ 
+      res.json({
         message: 'Audio file deleted successfully',
-        videoId 
+        videoId
       });
     } else {
-      res.status(404).json({ 
+      res.status(404).json({
         error: 'Audio file not found',
-        videoId 
+        videoId
       });
     }
 
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to delete audio',
-      message: error.message 
+      message: error.message
     });
   }
 });
@@ -165,9 +169,9 @@ router.get('/stats/storage', async (req, res) => {
     const stats = await audioService.getStorageStats();
     res.json(stats);
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to get storage stats',
-      message: error.message 
+      message: error.message
     });
   }
 });
@@ -180,15 +184,15 @@ router.post('/cleanup', async (req, res) => {
   try {
     await audioService.cleanupOldFiles();
     const stats = await audioService.getStorageStats();
-    
-    res.json({ 
+
+    res.json({
       message: 'Cleanup completed',
-      stats 
+      stats
     });
   } catch (error) {
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Cleanup failed',
-      message: error.message 
+      message: error.message
     });
   }
 });

@@ -88,13 +88,51 @@ const Search: React.FC = () => {
   };
 
   /**
-   * Handle download
+   * Handle download for offline
    */
   const handleDownload = async (track: Track) => {
     try {
       await downloadTrack(track);
     } catch (error) {
       console.error('Download failed:', error);
+    }
+  };
+
+  /**
+   * Handle download music file
+   */
+  const handleDownloadMusic = async (track: Track) => {
+    try {
+      console.log(`🎵 Downloading music file: ${track.title}`);
+      
+      // Check if track has videoId
+      if (!track.videoId) {
+        console.error('❌ No videoId available for download');
+        return;
+      }
+      
+      // Fetch stream URL from API
+      const response = await fetch(`/api/stream/${track.videoId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch stream URL');
+      }
+      
+      const streamData = await response.json();
+      
+      // Create a temporary link element
+      const link = document.createElement('a');
+      link.href = streamData.url;
+      link.download = `${track.artist} - ${track.title}.mp3`;
+      link.target = '_blank';
+      
+      // Trigger download
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      console.log('✅ Music download started');
+    } catch (error) {
+      console.error('❌ Music download failed:', error);
     }
   };
 
@@ -176,6 +214,7 @@ const Search: React.FC = () => {
                         onAddToPlaylist={handleAddToPlaylist}
                         onToggleLike={handleToggleLike}
                         onDownload={handleDownload}
+                        onDownloadMusic={handleDownloadMusic}
                         isLiked={isLiked(track.id)}
                         isDownloaded={isDownloaded(track.id)}
                       />

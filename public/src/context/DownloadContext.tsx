@@ -1,19 +1,22 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Track } from '../types/types';
 import { useAuth } from './AuthContext';
-import { streamAPI } from '../services/api';
+import offlineDB from '../services/offlineDB';
 
 interface DownloadedTrack {
   track: Track;
   downloadedAt: string;
-  fileSize?: number;
-  localPath?: string; // Will be used with SQLite later
+  fileSize: number;
 }
 
 interface DownloadProgress {
   trackId: string;
+  trackTitle: string; // NEW: Track title for display
+  trackArtist: string; // NEW: Track artist for display
+  coverUrl?: string; // NEW: Track cover for display
   progress: number; // 0-100
   status: 'downloading' | 'completed' | 'failed';
+  error?: string;
 }
 
 interface DownloadContextType {
@@ -25,6 +28,8 @@ interface DownloadContextType {
   removeDownload: (trackId: string) => void;
   getDownloadedCount: () => number;
   clearDownloads: () => void;
+  getStorageUsage: () => Promise<{ totalSizeMB: number; trackCount: number }>;
+  getOfflineAudioUrl: (videoId: string) => Promise<string | null>;
 }
 
 const DownloadContext = createContext<DownloadContextType | undefined>(undefined);
@@ -38,43 +43,49 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
   const [downloadQueue, setDownloadQueue] = useState<DownloadProgress[]>([]);
   const { user } = useAuth();
 
-  // Load downloaded tracks from localStorage on mount
+  // Initialize IndexedDB and load downloaded tracks on mount
   useEffect(() => {
-    if (user) {
-      loadDownloadedTracks();
-    } else {
-      setDownloadedTracks([]);
-    }
+    initializeOfflineStorage();
   }, [user]);
 
   /**
-   * Load downloaded tracks from localStorage
+   * Initialize offline storage
    */
-  const loadDownloadedTracks = () => {
+  const initializeOfflineStorage = async () => {
     try {
-      const storageKey = `vibestream_downloads_${user?.id || 'guest'}`;
-      const stored = localStorage.getItem(storageKey);
-      
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        setDownloadedTracks(parsed);
-        console.log(`✅ Loaded ${parsed.length} downloaded tracks`);
-      }
+      await offlineDB.init();
+      await loadDownloadedTracks();
     } catch (error) {
-      console.error('❌ Failed to load downloaded tracks:', error);
+      console.error('❌ Failed to initialize offline storage:', error);
     }
   };
 
   /**
-   * Save downloaded tracks to localStorage
+   * Load downloaded tracks from IndexedDB
    */
-  const saveDownloadedTracks = (tracks: DownloadedTrack[]) => {
+  const loadDownloadedTracks = async () => {
     try {
-      const storageKey = `vibestream_downloads_${user?.id || 'guest'}`;
-      localStorage.setItem(storageKey, JSON.stringify(tracks));
-      console.log(`💾 Saved ${tracks.length} downloaded tracks`);
+      const metadata = await offlineDB.getAllMetadata();
+
+      const tracks: DownloadedTrack[] = metadata.map(meta => ({
+        track: {
+          id: meta.trackId,
+          videoId: meta.videoId,
+          title: meta.title,
+          artist: meta.artist,
+          album: meta.album,
+          coverUrl: meta.coverUrl,
+          duration: meta.duration,
+          playCount: meta.playCount,
+        },
+        downloadedAt: meta.downloadedAt,
+        fileSize: 0, // Will be calculated if needed
+      }));
+
+      setDownloadedTracks(tracks);
+      console.log(`✅ Loaded ${tracks.length} offline tracks`);
     } catch (error) {
-      console.error('❌ Failed to save downloaded tracks:', error);
+      console.error('❌ Failed to load downloaded tracks:', error);
     }
   };
 
@@ -110,32 +121,104 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       return;
     }
 
+    // Check if track has videoId
+    if (!track.videoId) {
+      console.error(`❌ No videoId for track: ${track.title}`);
+      throw new Error('Track has no videoId');
+    }
+
     console.log(`⬇️ Starting download: ${track.title}`);
 
     // Add to download queue
     const downloadProgress: DownloadProgress = {
       trackId: track.id,
+      trackTitle: track.title,
+      trackArtist: track.artist,
+      coverUrl: track.coverUrl,
       progress: 0,
       status: 'downloading'
     };
     setDownloadQueue(prev => [...prev, downloadProgress]);
 
     try {
-      // Simulate download progress
-      // TODO: Replace with actual file download logic and SQLite storage
-      for (let i = 0; i <= 100; i += 20) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
+      // Get auth token for authenticated request
+      const token = localStorage.getItem('auth_token');
+
+      // Fetch audio file from backend with auth token
+      const response = await fetch(`/api/stream/${track.videoId}`, {
+        headers: token
+          ? { Authorization: `Bearer ${token}` }
+          : {},
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to fetch audio: ${errorText}`);
+      }
+
+      // 🔒 CRITICAL: validate response type
+      const contentType = response.headers.get('content-type');
+
+      if (!contentType || !contentType.includes('audio')) {
+        const errorText = await response.text();
+        throw new Error(`Invalid audio response: ${errorText}`);
+      }
+
+
+      // Get total file size
+      const contentLength = response.headers.get('content-length');
+      const totalSize = contentLength ? parseInt(contentLength, 10) : 0;
+
+      // Read response as blob with progress tracking
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Failed to get response reader');
+      }
+
+      const chunks: Uint8Array[] = [];
+      let receivedLength = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        chunks.push(value);
+        receivedLength += value.length;
+
+        // Update progress
+        const progress = totalSize > 0 ? Math.floor((receivedLength / totalSize) * 100) : 0;
         setDownloadQueue(prev =>
           prev.map(dq =>
             dq.trackId === track.id
-              ? { ...dq, progress: i }
+              ? { ...dq, progress }
               : dq
           )
         );
       }
 
-      // Mark as completed in queue
+      // Combine chunks into single blob - FIX: Cast to BlobPart[]
+      const chunksArray = chunks as BlobPart[];
+      const audioBlob = new Blob(chunksArray, { type: 'audio/mpeg' });
+      console.log(`✅ Downloaded ${(audioBlob.size / 1024 / 1024).toFixed(2)} MB`);
+
+      // Save to IndexedDB
+      await offlineDB.saveAudioFile(track.videoId, audioBlob);
+
+      // Save metadata
+      await offlineDB.saveMetadata({
+        videoId: track.videoId,
+        trackId: track.id,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        coverUrl: track.coverUrl,
+        duration: track.duration,
+        downloadedAt: new Date().toISOString(),
+        playCount: 0,
+      });
+
+      // Mark as completed
       setDownloadQueue(prev =>
         prev.map(dq =>
           dq.trackId === track.id
@@ -144,20 +227,14 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         )
       );
 
-      // Create downloaded track entry
+      // Add to downloaded tracks
       const downloadedTrack: DownloadedTrack = {
         track,
         downloadedAt: new Date().toISOString(),
-        fileSize: undefined, // Will be set when we implement actual download
-        localPath: undefined, // Will be SQLite path
+        fileSize: audioBlob.size,
       };
 
-      // Add to downloaded tracks
-      setDownloadedTracks(prev => {
-        const newDownloads = [...prev, downloadedTrack];
-        saveDownloadedTracks(newDownloads);
-        return newDownloads;
-      });
+      setDownloadedTracks(prev => [...prev, downloadedTrack]);
 
       console.log(`✅ Download completed: ${track.title}`);
 
@@ -173,7 +250,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       setDownloadQueue(prev =>
         prev.map(dq =>
           dq.trackId === track.id
-            ? { ...dq, status: 'failed' }
+            ? { ...dq, status: 'failed', error: error.message }
             : dq
         )
       );
@@ -190,20 +267,24 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
   /**
    * Remove a downloaded track
    */
-  const removeDownload = (trackId: string) => {
-    setDownloadedTracks(prev => {
-      const newDownloads = prev.filter(dt => dt.track.id !== trackId);
-      saveDownloadedTracks(newDownloads);
-      
-      const removedTrack = prev.find(dt => dt.track.id === trackId);
-      if (removedTrack) {
-        console.log(`🗑️ Removed download: ${removedTrack.track.title}`);
+  const removeDownload = async (trackId: string) => {
+    try {
+      const track = downloadedTracks.find(dt => dt.track.id === trackId);
+      if (!track || !track.track.videoId) {
+        console.warn(`⚠️ Track not found: ${trackId}`);
+        return;
       }
-      
-      return newDownloads;
-    });
 
-    // TODO: Delete actual file from SQLite/filesystem
+      // Delete from IndexedDB
+      await offlineDB.deleteTrack(track.track.videoId);
+
+      // Remove from state
+      setDownloadedTracks(prev => prev.filter(dt => dt.track.id !== trackId));
+
+      console.log(`🗑️ Removed download: ${track.track.title}`);
+    } catch (error) {
+      console.error('❌ Failed to remove download:', error);
+    }
   };
 
   /**
@@ -216,13 +297,49 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
   /**
    * Clear all downloaded tracks
    */
-  const clearDownloads = () => {
-    setDownloadedTracks([]);
-    const storageKey = `vibestream_downloads_${user?.id || 'guest'}`;
-    localStorage.removeItem(storageKey);
-    console.log('🗑️ Cleared all downloads');
+  const clearDownloads = async () => {
+    try {
+      await offlineDB.clearAll();
+      setDownloadedTracks([]);
+      console.log('🗑️ Cleared all downloads');
+    } catch (error) {
+      console.error('❌ Failed to clear downloads:', error);
+    }
+  };
 
-    // TODO: Delete all files from SQLite/filesystem
+  /**
+   * Get storage usage statistics
+   */
+  const getStorageUsage = async (): Promise<{ totalSizeMB: number; trackCount: number }> => {
+    try {
+      const { totalSize, trackCount } = await offlineDB.getStorageUsage();
+      return {
+        totalSizeMB: totalSize / 1024 / 1024,
+        trackCount,
+      };
+    } catch (error) {
+      console.error('❌ Failed to get storage usage:', error);
+      return { totalSizeMB: 0, trackCount: 0 };
+    }
+  };
+
+  /**
+   * Get offline audio URL for playback
+   */
+  const getOfflineAudioUrl = async (videoId: string): Promise<string | null> => {
+    try {
+      const audioBlob = await offlineDB.getAudioFile(videoId);
+      if (!audioBlob) {
+        return null;
+      }
+
+      // Create object URL from blob
+      const url = URL.createObjectURL(audioBlob);
+      return url;
+    } catch (error) {
+      console.error('❌ Failed to get offline audio URL:', error);
+      return null;
+    }
   };
 
   return (
@@ -236,6 +353,8 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
         removeDownload,
         getDownloadedCount,
         clearDownloads,
+        getStorageUsage,
+        getOfflineAudioUrl,
       }}
     >
       {children}
