@@ -2,12 +2,10 @@ import React, { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Home, Search, Library, Plus, Heart, Music2, PlusCircle, Send, User, Download } from 'lucide-react';
 import { useDownloads } from '../context/DownloadContext';
-
-// Mock components - replace with your actual imports
-const Player = () => <div />;
-const CreateModal = ({ isOpen, onClose }: any) => null;
-const UserProfileMenu = ({ isOpen, onClose }: any) => null;
-const DownloadProgressToast = () => <div />;
+import Player from './Player';
+import DownloadProgressToast from './DownloadProgressToast';
+import CreateModal from './CreateModal';
+import UserProfileMenu from './UserProfile';
 
 const Sidebar = () => {
   const navigate = useNavigate();
