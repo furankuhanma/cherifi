@@ -23,25 +23,24 @@ the offline feature is now available so there are more things to add like
 
 
 the shuffle, repeat, next, etc. feature on the player component. I need to make it functional.(smart recommending algorithm)
-add or delete playlist
+add or delete playlist /
 account sidebar functional
 vibestream ai should be able to give music reccomendations that are clickable 
-keep message history
+keep message history /
 be able to chat with friends and share music
 profile details like facebook
 
 and some ui fixes
-offline library
-progress download
+offline library ///
+progress download 
 playlist track
-download animation badge
-change branding //
-remove create albums and albums on library
-coverphoto of musics
-hover logic change
+download animation badge 
+change branding ///
+remove create albums and albums on library ///
+
 
 listening history
-user data should only be accessible to the data 
+user data should only be accessible to the data /
 add to playlist ontoggle 
 home page, add more music below (infinite scroll)
 liked songs 
