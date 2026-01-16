@@ -20,15 +20,23 @@ const Library: React.FC = () => {
     { id: 'artists', name: 'Artists', icon: <Mic2 size={18} /> }
   ];
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
+const { refreshLikes } = useLikes(); // Ensure your LikeContext exports a refresh function
+
+const handleRefresh = async () => {
+  setIsRefreshing(true);
+  try {
+    if (activeTab === 'playlists') {
       await refreshPlaylists();
-      setIsRefreshing(false);
-    } catch (err) {
-      setTimeout(() => setIsRefreshing(false), 2000);
+    } else if (activeTab === 'liked songs') {
+      // If your LikeContext has a refresh function, call it here
+      if (refreshLikes) await refreshLikes(); 
     }
-  };
+  } catch (err) {
+    console.error("Refresh failed", err);
+  } finally {
+    setIsRefreshing(false);
+  }
+};
 
   /**
    * RENDER: Liked Songs Tab
@@ -55,12 +63,11 @@ const Library: React.FC = () => {
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
           <div>
             <span className="text-blue-400 hover:scale-110 transition p-2">
-              <FaHeart size={32} />
+              <FaHeart size={50} />
             </span>
           </div>
           <div className="max-w-xs">
             <h3 className="text-xl font-bold mb-2">No liked songs yet</h3>
-            <p className="text-zinc-400 text-sm">Tap the heart on any track to save it to your library.</p>
           </div>
           <button
             onClick={() => navigate('/search')}
@@ -138,7 +145,7 @@ const Library: React.FC = () => {
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <Music size={64} className="text-zinc-400 mb-4" />
           <h3 className="text-xl font-bold">No playlists yet</h3>
-          <button onClick={() => navigate('/search')} className="mt-4 text-blue-400 underline">Find Music</button>
+          <button onClick={() => navigate('/search')} className="mt-4 p-3 pl-8 pr-8 text-black font-bold bg-blue-500 rounded-full">Find Music</button>
         </div>
       );
     }
@@ -183,7 +190,7 @@ const Library: React.FC = () => {
     <div className="space-y-6 md:p-8 animate-in fade-in duration-500">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl md:text-3xl font-bold">Your Library</h1>
-        {activeTab === 'playlists' && (
+        {(activeTab === 'playlists' || activeTab == 'liked songs') && (
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
@@ -199,7 +206,10 @@ const Library: React.FC = () => {
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => 
+              setActiveTab(tab.id as any)
+            
+            }
             className={`flex items-center gap-1 px-4 py-3 text-xs font-bold transition ${activeTab === tab.id
                 ? 'text-blue-400 border-b-2 border-blue-400'
                 : 'text-zinc-400 hover:text-white'

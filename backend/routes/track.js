@@ -42,7 +42,7 @@ router.get('/liked', async (req, res) => {
       `SELECT t.* FROM tracks t
        INNER JOIN liked_tracks lt ON t.id = lt.track_id
        WHERE lt.user_id = ?
-       ORDER BY lt.created_at DESC`,
+       ORDER BY lt.liked_at DESC`,
       [userId]
     );
 
