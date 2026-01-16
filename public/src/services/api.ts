@@ -7,48 +7,6 @@ console.log(import.meta.env.VITE_BACKEND_URL)
 // Backend base URL
 const BASE_URL = (import.meta.env.VITE_BACKEND_URL as string) || 'http://localhost:3001';
 
-
-// ============================================
-// TRACK / LIKES API
-// ============================================
-
-export const trackAPI = {
-  getLikedTracks: async (): Promise<Track[]> => {
-    try {
-      const response = await apiClient.get('/tracks/liked');
-      // CHANGE: Return response.data directly because it IS the array
-      return response.data; 
-    } catch (error) {
-      console.error('Get liked tracks failed:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Like a track (Save to DB)
-   */
-  likeTrack: async (trackData: Track): Promise<void> => {
-    try {
-      await apiClient.post('/tracks/like', { trackData });
-    } catch (error) {
-      console.error('Like track failed:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Unlike a track (Remove from DB)
-   */
-  unlikeTrack: async (trackId: string): Promise<void> => {
-    try {
-      await apiClient.delete(`/tracks/like/${trackId}`);
-    } catch (error) {
-      console.error('Unlike track failed:', error);
-      throw error;
-    }
-  }
-};
-
 // Create axios instance with default config
 const apiClient: AxiosInstance = axios.create({
   baseURL: `${BASE_URL}/api`,
@@ -63,7 +21,7 @@ apiClient.interceptors.request.use(
   (config) => {
     console.log(`🌐 API Request: ${config.method?.toUpperCase()} ${config.url}`);
     
-    // ✅ NEW: Add auth token to requests if available
+    // ✅ Add auth token to requests if available
     const token = localStorage.getItem('auth_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -86,7 +44,7 @@ apiClient.interceptors.response.use(
   (error: AxiosError) => {
     console.error('❌ Response Error:', error.response?.data || error.message);
     
-    // ✅ NEW: Handle 401 Unauthorized - redirect to login
+    // ✅ Handle 401 Unauthorized - redirect to login
     if (error.response?.status === 401) {
       console.warn('⚠️ Unauthorized - clearing auth token');
       localStorage.removeItem('auth_token');
@@ -99,7 +57,7 @@ apiClient.interceptors.response.use(
 );
 
 // ============================================
-// ✅ NEW: AUTHENTICATION API
+// ✅ AUTHENTICATION API
 // ============================================
 
 export const authAPI = {
@@ -238,6 +196,46 @@ export const authAPI = {
 };
 
 // ============================================
+// TRACK / LIKES API
+// ============================================
+
+export const trackAPI = {
+  getLikedTracks: async (): Promise<Track[]> => {
+    try {
+      const response = await apiClient.get('/tracks/liked');
+      return response.data;
+    } catch (error) {
+      console.error('Get liked tracks failed:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Like a track (Save to DB)
+   */
+  likeTrack: async (trackData: Track): Promise<void> => {
+    try {
+      await apiClient.post('/tracks/like', { trackData });
+    } catch (error) {
+      console.error('Like track failed:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Unlike a track (Remove from DB)
+   */
+  unlikeTrack: async (trackId: string): Promise<void> => {
+    try {
+      await apiClient.delete(`/tracks/like/${trackId}`);
+    } catch (error) {
+      console.error('Unlike track failed:', error);
+      throw error;
+    }
+  }
+};
+
+// ============================================
 // SEARCH API
 // ============================================
 
@@ -285,15 +283,51 @@ export const searchAPI = {
 };
 
 // ============================================
-// STREAM API
+// STREAM API - ✅ FIXED with Auth Support
 // ============================================
 
 export const streamAPI = {
   /**
-   * Get stream URL for a video
+   * Get stream URL for a video (legacy - for direct URLs without auth)
    */
   getStreamUrl: (videoId: string): string => {
     return `${BASE_URL}/api/stream/${videoId}`;
+  },
+
+  /**
+   * ✅ NEW: Fetch authenticated stream and return blob URL
+   * This allows the audio element to play with auth headers
+   */
+  getAuthenticatedStreamUrl: async (videoId: string): Promise<string> => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      
+      console.log(`🔐 Fetching authenticated stream for: ${videoId}`);
+      
+      const response = await fetch(`${BASE_URL}/api/stream/${videoId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': token ? `Bearer ${token}` : '',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Stream request failed: ${response.status}`);
+      }
+
+      // Convert to blob
+      const blob = await response.blob();
+      
+      // Create object URL
+      const objectUrl = URL.createObjectURL(blob);
+      
+      console.log(`✅ Created authenticated stream URL for: ${videoId}`);
+      return objectUrl;
+      
+    } catch (error) {
+      console.error('❌ Failed to get authenticated stream:', error);
+      throw error;
+    }
   },
 
   /**
@@ -607,10 +641,11 @@ export const serverAPI = {
 
 // Export everything as default
 export default {
-  auth: authAPI,        // ✅ NEW
+  auth: authAPI,
   search: searchAPI,
   stream: streamAPI,
   ai: aiAPI,
   playlist: playlistAPI,
   server: serverAPI,
+  track: trackAPI,
 };

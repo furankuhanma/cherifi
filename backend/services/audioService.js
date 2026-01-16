@@ -2,7 +2,7 @@ const youtubedl = require('youtube-dl-exec');
 const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs').promises;
 const path = require('path');
-const Track = require('../models/Track'); // ✅ Import Track model
+const Track = require('../models/Track');
 
 class AudioService {
   constructor() {
@@ -25,7 +25,7 @@ class AudioService {
 
   /**
    * Download and convert YouTube video to MP3
-   * Automatically updates DB local status on success
+   * ✅ FIXED: Now returns metadata for database saving
    */
   async downloadAudio(videoId) {
     const outputFilename = `${videoId}.mp3`;
@@ -36,12 +36,43 @@ class AudioService {
       // 1. Double check if file exists (Safety Check)
       const exists = await this.fileExists(outputPath);
       if (exists) {
-        return { videoId, filePath: outputPath, cached: true };
+        // ✅ FIXED: Even for cached files, fetch metadata
+        console.log(`⚡ File cached, fetching metadata: ${videoId}`);
+        const metadata = await this.getMetadata(videoId);
+        return { 
+          videoId, 
+          filePath: outputPath, 
+          cached: true,
+          metadata // ✅ Include metadata
+        };
       }
 
       console.log(`⬇️ Starting YouTube Download: ${videoId}`);
 
-      // 2. Download audio using yt-dlp logic
+      // 2. ✅ FIXED: Download with metadata extraction
+      const info = await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
+        dumpSingleJson: true,
+        noCheckCertificates: true,
+        noWarnings: true,
+        preferFreeFormats: true,
+        addHeader: ['referer:youtube.com', 'user-agent:googlebot']
+      });
+
+      // 3. Extract metadata from yt-dlp response
+      const metadata = {
+        title: info.title || 'Unknown Title',
+        artist: info.artist || info.uploader || info.channel || 'Unknown Artist',
+        album: info.album || 'YouTube Music',
+        thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length > 0 ? info.thumbnails[0].url : ''),
+        duration: info.duration || 0,
+        uploader: info.uploader || info.channel || 'Unknown',
+        channel: info.channel || info.uploader || 'Unknown',
+        view_count: info.view_count || 0
+      };
+
+      console.log(`📋 Metadata extracted: ${metadata.title} - ${metadata.artist}`);
+
+      // 4. Download audio
       await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
         extractAudio: true,
         audioFormat: 'mp3',
@@ -59,16 +90,16 @@ class AudioService {
       if (!downloadedFile) throw new Error('Downloaded file not found');
       const downloadedPath = path.join(this.tempDir, downloadedFile);
 
-      // 3. Convert & Normalize
+      // 5. Convert & Normalize
       await this.convertToMP3(downloadedPath, outputPath);
 
-      // 4. Update Database (Hybrid Logic) ✅
+      // 6. Update Database local status
       const stats = await fs.stat(outputPath);
       const fileSizeMB = parseFloat((stats.size / (1024 * 1024)).toFixed(2));
       
       await Track.updateLocalStatus(videoId, outputPath, fileSizeMB);
 
-      // 5. Cleanup
+      // 7. Cleanup
       await fs.unlink(downloadedPath).catch(() => {});
       await this.cleanupOldFiles();
 
@@ -76,13 +107,42 @@ class AudioService {
         videoId,
         filePath: outputPath,
         url: `/audio/${outputFilename}`,
-        cached: false
+        cached: false,
+        metadata // ✅ Return metadata for Track.save()
       };
 
     } catch (error) {
       console.error(`❌ Download failed for ${videoId}:`, error.message);
       await this.cleanupTempFiles(videoId);
       throw error;
+    }
+  }
+
+  /**
+   * ✅ NEW: Get metadata for a video without downloading
+   */
+  async getMetadata(videoId) {
+    try {
+      const info = await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
+        dumpSingleJson: true,
+        noCheckCertificates: true,
+        noWarnings: true,
+        skipDownload: true
+      });
+
+      return {
+        title: info.title || 'Unknown Title',
+        artist: info.artist || info.uploader || info.channel || 'Unknown Artist',
+        album: info.album || 'YouTube Music',
+        thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length > 0 ? info.thumbnails[0].url : ''),
+        duration: info.duration || 0,
+        uploader: info.uploader || info.channel || 'Unknown',
+        channel: info.channel || info.uploader || 'Unknown',
+        view_count: info.view_count || 0
+      };
+    } catch (error) {
+      console.error(`⚠️ Failed to fetch metadata for ${videoId}:`, error.message);
+      return null;
     }
   }
 
@@ -140,10 +200,9 @@ class AudioService {
         const deleteCount = Math.ceil(fileStats.length * 0.2);
         for (let i = 0; i < deleteCount; i++) {
           await fs.unlink(fileStats[i].path);
-          // Sync DB: Mark as not downloaded anymore
+          // Mark as not downloaded in DB
           const vId = fileStats[i].name.replace('.mp3', '');
-          await Track.updateLocalStatus(vId, null, 0); 
-          // Note: we can modify updateLocalStatus or add a specific reset method
+          await Track.updateLocalStatus(vId, null, 0);
         }
       }
     } catch (error) {

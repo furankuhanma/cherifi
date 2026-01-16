@@ -29,6 +29,7 @@ vibestream ai should be able to give music reccomendations that are clickable
 keep message history /
 be able to chat with friends and share music
 profile details like facebook
+user bug session fix
 
 and some ui fixes
 offline library ///
@@ -49,4 +50,5 @@ search genre (pop, hip-hop, rock etc.)
 add more storage for offline
 
 
-
+there's a mistake in the backend. when the music get's stream it has to automatically be saved in the database table 
+because in the listening history it cannot be recorded unless it's in the tracks table. and sometimes even if it's in the tracks table it does not save in the listening history, i think we need to identify everytime who is asking for the stream so we can save every song being stream and user who is streaming it 

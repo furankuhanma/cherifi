@@ -67,7 +67,6 @@ class Track {
     }
   }
 
-  // ✅ NEW: Unlike Logic to remove from database
   /**
    * Remove a track from a user's liked list
    * @param {number} userId 
@@ -145,28 +144,47 @@ class Track {
 
   /**
    * Increment play count and add to listening history
+   * ✅ FIXED: Now requires userId parameter with better error handling
+   * @param {string} videoId - YouTube video ID
+   * @param {number} userId - User ID (required)
    */
-  static async recordPlay(videoId) {
+  static async recordPlay(videoId, userId) {
     try {
+      // Validate inputs
+      if (!userId) {
+        throw new Error('User ID is required to record play');
+      }
+
+      if (!videoId) {
+        throw new Error('Video ID is required to record play');
+      }
+
       await database.transaction(async (connection) => {
+        // Get track ID
         const [tracks] = await connection.execute(
           'SELECT id FROM tracks WHERE video_id = ?',
           [videoId]
         );
 
-        if (tracks.length === 0) throw new Error('Track not found');
+        if (tracks.length === 0) {
+          throw new Error(`Track not found in database: ${videoId}. Cannot record play.`);
+        }
 
         const trackId = tracks[0].id;
 
+        // Increment play count
         await connection.execute(
           'UPDATE tracks SET play_count = play_count + 1, last_played_at = NOW() WHERE id = ?',
           [trackId]
         );
 
+        // ✅ FIXED: Add to listening history with user_id
         await connection.execute(
-          'INSERT INTO listening_history (track_id) VALUES (?)',
-          [trackId]
+          'INSERT INTO listening_history (user_id, track_id) VALUES (?, ?)',
+          [userId, trackId]
         );
+
+        console.log(`📊 Recorded play: ${videoId} by user ${userId}`);
       });
     } catch (error) {
       console.error('Error recording play:', error);

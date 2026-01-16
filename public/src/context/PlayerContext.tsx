@@ -16,7 +16,7 @@ interface PlayerContextType {
   seek: (seconds: number) => void;
   playlist: Track[];
   setPlaylist: (tracks: Track[]) => void;
-  isPlayingOffline: boolean; // NEW: Track if current playback is offline
+  isPlayingOffline: boolean;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -27,7 +27,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [progress, setProgress] = useState(0);
   const [volume, setVolumeState] = useState(0.8);
   const [playlist, setPlaylist] = useState<Track[]>([]);
-  const [isPlayingOffline, setIsPlayingOffline] = useState(false); // NEW
+  const [isPlayingOffline, setIsPlayingOffline] = useState(false);
 
   // Get download functions
   const { isDownloaded, getOfflineAudioUrl } = useDownloads();
@@ -80,7 +80,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   // Handle audio error
-  const handleAudioError = (e: Event) => {
+  const handleAudioError = async (e: Event) => {
     console.error('❌ Audio playback error:', e);
     setIsPlaying(false);
     
@@ -88,13 +88,21 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (isPlayingOffline && currentTrack?.videoId) {
       console.log('🔄 Offline playback failed, trying online stream...');
       setIsPlayingOffline(false);
-      const streamUrl = streamAPI.getStreamUrl(currentTrack.videoId);
-      if (audioRef.current) {
-        audioRef.current.src = streamUrl;
-        audioRef.current.load();
-        audioRef.current.play().catch(err => {
-          console.error('❌ Online playback also failed:', err);
-        });
+      
+      try {
+        // ✅ Use authenticated stream for fallback
+        const streamUrl = await streamAPI.getAuthenticatedStreamUrl(currentTrack.videoId);
+        currentObjectUrlRef.current = streamUrl;
+        
+        if (audioRef.current) {
+          audioRef.current.src = streamUrl;
+          audioRef.current.load();
+          audioRef.current.play().catch(err => {
+            console.error('❌ Online playback also failed:', err);
+          });
+        }
+      } catch (err) {
+        console.error('❌ Failed to get authenticated stream:', err);
       }
     }
   };
@@ -142,19 +150,27 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 setIsPlaying(true);
                 console.log('✅ Offline playback started');
               })
-              .catch((error) => {
+              .catch(async (error) => {
                 console.error('❌ Offline playback failed:', error);
                 setIsPlaying(false);
                 setIsPlayingOffline(false);
                 
-                // Fallback to online stream
-                console.log('🌐 Falling back to online stream...');
-                const streamUrl = streamAPI.getStreamUrl(track.videoId);
-                audioRef.current!.src = streamUrl;
-                audioRef.current!.load();
-                audioRef.current!.play().catch(err => {
-                  console.error('❌ Online fallback also failed:', err);
-                });
+                // ✅ Fallback to authenticated online stream
+                console.log('🌐 Falling back to authenticated online stream...');
+                try {
+                  const streamUrl = await streamAPI.getAuthenticatedStreamUrl(track.videoId);
+                  currentObjectUrlRef.current = streamUrl;
+                  
+                  if (audioRef.current) {
+                    audioRef.current.src = streamUrl;
+                    audioRef.current.load();
+                    audioRef.current.play().catch(err => {
+                      console.error('❌ Online fallback also failed:', err);
+                    });
+                  }
+                } catch (err) {
+                  console.error('❌ Failed to get authenticated stream:', err);
+                }
               });
           }
           return; // Exit early for offline playback
@@ -165,25 +181,32 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
 
-    // Play online (either not downloaded or offline failed)
-    console.log('🌐 Playing online:', track.title);
+    // ✅ Play online with authentication (either not downloaded or offline failed)
+    console.log('🌐 Playing online with authentication:', track.title);
     setIsPlayingOffline(false);
-    const streamUrl = streamAPI.getStreamUrl(track.videoId);
     
-    if (audioRef.current) {
-      audioRef.current.src = streamUrl;
-      audioRef.current.load();
+    try {
+      const streamUrl = await streamAPI.getAuthenticatedStreamUrl(track.videoId);
+      currentObjectUrlRef.current = streamUrl; // Store for cleanup
       
-      // Play audio
-      audioRef.current.play()
-        .then(() => {
-          setIsPlaying(true);
-          console.log('✅ Online playback started');
-        })
-        .catch((error) => {
-          console.error('❌ Online playback failed:', error);
-          setIsPlaying(false);
-        });
+      if (audioRef.current) {
+        audioRef.current.src = streamUrl;
+        audioRef.current.load();
+        
+        // Play audio
+        audioRef.current.play()
+          .then(() => {
+            setIsPlaying(true);
+            console.log('✅ Online playback started (authenticated)');
+          })
+          .catch((error) => {
+            console.error('❌ Online playback failed:', error);
+            setIsPlaying(false);
+          });
+      }
+    } catch (error) {
+      console.error('❌ Failed to get authenticated stream:', error);
+      setIsPlaying(false);
     }
   }, [isDownloaded, getOfflineAudioUrl]);
 
@@ -279,7 +302,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         seek,
         playlist,
         setPlaylist,
-        isPlayingOffline, // NEW: Expose offline status
+        isPlayingOffline,
       }}
     >
       {children}

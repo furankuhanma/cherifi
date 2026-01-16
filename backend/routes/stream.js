@@ -1,9 +1,14 @@
+// ============================================================================
+// backend/routes/stream.js - COMPLETE FIXED VERSION
+// ============================================================================
 const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const AudioService = require('../services/audioService');
-const Track = require('../models/Track'); // ✅ Added Track model
+const Track = require('../models/Track');
+const database = require('../config/database');
+const { optionalAuth } = require('../middleware/auth');
 
 // Initialize audio service
 const audioService = new AudioService();
@@ -11,9 +16,11 @@ const audioService = new AudioService();
 /**
  * GET /api/stream/:videoId
  * Stream MP3 audio using Hybrid Logic (DB -> Local Storage -> YouTube Fallback)
+ * ✅ FIXED: Auto-saves track metadata + records play for authenticated users
  */
-router.get('/:videoId', async (req, res) => {
+router.get('/:videoId', optionalAuth, async (req, res) => {
   const { videoId } = req.params;
+  const userId = req.user?.id;
 
   try {
     // 1. Validate videoId format
@@ -24,27 +31,43 @@ router.get('/:videoId', async (req, res) => {
       });
     }
 
-    console.log(`🎵 Stream request: ${videoId}`);
+    console.log(`🎵 Stream request: ${videoId}${userId ? ` (User: ${userId})` : ' (Anonymous)'}`);
 
-    // 2. CHECK DATABASE FIRST (Hybrid Logic)
-    let filePath;
-    let isCached = false;
-    const track = await Track.findByVideoId(videoId);
+    // 2. Download audio from YouTube (always get fresh metadata)
+    console.log(`📡 Fetching from YouTube: ${videoId}`);
+    const audioData = await audioService.downloadAudio(videoId);
+    const filePath = audioData.filePath;
+    const isCached = audioData.cached;
 
-    if (track && track.isDownloaded && track.localPath && fs.existsSync(track.localPath)) {
-      // ✅ DATABASE HIT: File exists on server disk
-      filePath = track.localPath;
-      isCached = true;
-      console.log(`⚡ Serving directly from Server Storage: ${videoId}`);
+    // 3. ✅ ALWAYS save/update track metadata in database (no duplicates by video_id)
+    let track = null;
+    if (audioData.metadata) {
+      console.log(`💾 Saving/updating track metadata for: ${videoId}`);
+      
+      try {
+        track = await Track.save({
+          videoId: videoId,
+          title: audioData.metadata.title || 'Unknown Title',
+          artist: audioData.metadata.artist || audioData.metadata.uploader || 'Unknown Artist',
+          album: audioData.metadata.album || 'YouTube Music',
+          coverUrl: audioData.metadata.thumbnail || (audioData.metadata.thumbnails && audioData.metadata.thumbnails[0] ? audioData.metadata.thumbnails[0].url : ''),
+          duration: audioData.metadata.duration || 0,
+          channelTitle: audioData.metadata.uploader || audioData.metadata.channel || '',
+          viewCount: audioData.metadata.view_count || 0
+        });
+        
+        console.log(`✅ Track saved/updated in database: ${videoId}`);
+      } catch (saveError) {
+        console.error('⚠️ Failed to save track metadata:', saveError.message);
+        // Continue streaming even if save fails
+      }
     } else {
-      // 🐌 DATABASE MISS: Download from YouTube
-      console.log(`📡 Not on server. Fetching from YouTube: ${videoId}`);
-      const audioData = await audioService.downloadAudio(videoId);
-      filePath = audioData.filePath;
-      isCached = audioData.cached;
+      console.warn('⚠️ No metadata returned from audioService for:', videoId);
+      // Try to get existing track from DB if metadata is missing
+      track = await Track.findByVideoId(videoId);
     }
 
-    // 3. Check if file is actually ready on disk
+    // 4. Check if file is actually ready on disk
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({
         error: 'File Error',
@@ -52,10 +75,18 @@ router.get('/:videoId', async (req, res) => {
       });
     }
 
-    // 4. Record the play in history
-    Track.recordPlay(videoId).catch(err => console.error('Play log error:', err));
+    // 5. ✅ FIXED: Record play ONLY if user is authenticated AND track exists in DB
+    if (userId && track) {
+      Track.recordPlay(videoId, userId).catch(err => {
+        console.error('❌ Play log error:', err.message);
+      });
+    } else if (!userId) {
+      console.log('⚠️ Anonymous play - not recording to history');
+    } else if (!track) {
+      console.error('⚠️ Cannot record play - track not in database');
+    }
 
-    // 5. Stream with Range Support (for seeking)
+    // 6. Stream with Range Support (for seeking)
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const range = req.headers.range;
