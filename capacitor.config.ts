@@ -4,6 +4,11 @@ const config: CapacitorConfig = {
   appId: 'com.cherifi.app',
   appName: 'CheriFi Music',
   webDir: 'dist',
+  server: {
+    // For development, you can override the server
+    url: 'https://frank-loui-lapore-hp-probook-640-g1.tail11c2e9.ts.net',
+    cleartext: true
+  },
   plugins: {
     SplashScreen: {
       launchShowDuration: 3000,

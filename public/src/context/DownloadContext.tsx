@@ -47,9 +47,7 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
 
   // Initialize storage on mount
   useEffect(() => {
-    if (user) {
-      initializeOfflineStorage();
-    }
+    initializeOfflineStorage();
   }, [user]);
 
   /**
@@ -57,13 +55,12 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
    */
   const initializeOfflineStorage = async () => {
     try {
-      await getOfflineStorage();
+      const storage = await getOfflineStorage();
       await loadDownloadedTracks();
       setStorageReady(true);
       console.log('✅ Offline storage initialized');
     } catch (error) {
       console.error('❌ Failed to initialize offline storage:', error);
-      setStorageReady(false);
     }
   };
 
@@ -155,8 +152,18 @@ export const DownloadProvider: React.FC<DownloadProviderProps> = ({ children }) 
       // Get auth token for authenticated request
       const token = localStorage.getItem('auth_token');
 
+      // Detect if running in Capacitor (native app)
+      const isCapacitor = !!(window as any).Capacitor;
+      
+      // Build correct API URL
+      const apiUrl = isCapacitor
+        ? `https://frank-loui-lapore-hp-probook-640-g1.tail11c2e9.ts.net/api/stream/${track.videoId}`
+        : `/api/stream/${track.videoId}`;
+      
+      console.log(`📡 Fetching from: ${apiUrl}`);
+
       // Fetch audio file from backend with auth token
-      const response = await fetch(`/api/stream/${track.videoId}`, {
+      const response = await fetch(apiUrl, {
         headers: token
           ? { Authorization: `Bearer ${token}` }
           : {},
