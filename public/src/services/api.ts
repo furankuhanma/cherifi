@@ -638,8 +638,60 @@ export const serverAPI = {
     }
   },
 };
+export const historyAPI = {
+  getHistory: async (limit: number = 50): Promise<Track[]> => {
+    try {
+      const response = await apiClient.get('/history', {
+        params: { limit }
+      });
+      return response.data.history || [];
+    } catch (error) {
+      console.error('Get history failed:', error);
+      throw error;
+    }
+  },
 
-// Export everything as default
+  addToHistory: async (trackData: Track): Promise<void> => {
+    try {
+      await apiClient.post('/history', { 
+        videoId: trackData.videoId,
+        trackData 
+      });
+    } catch (error) {
+      console.error('Add to history failed:', error);
+      throw error;
+    }
+  },
+
+  clearHistory: async (): Promise<void> => {
+    try {
+      await apiClient.delete('/history');
+    } catch (error) {
+      console.error('Clear history failed:', error);
+      throw error;
+    }
+  },
+
+  removeFromHistory: async (trackId: string): Promise<void> => {
+    try {
+      await apiClient.delete(`/history/${trackId}`);
+    } catch (error) {
+      console.error('Remove from history failed:', error);
+      throw error;
+    }
+  },
+
+  getStats: async () => {
+    try {
+      const response = await apiClient.get('/history/stats');
+      return response.data;
+    } catch (error) {
+      console.error('Get history stats failed:', error);
+      throw error;
+    }
+  }
+};
+
 export default {
   auth: authAPI,
   search: searchAPI,
@@ -648,4 +700,5 @@ export default {
   playlist: playlistAPI,
   server: serverAPI,
   track: trackAPI,
+  history: historyAPI,
 };

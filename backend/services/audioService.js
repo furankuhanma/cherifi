@@ -6,7 +6,7 @@ const Track = require('../models/Track');
 
 class AudioService {
   constructor() {
-    this.audioDir = process.env.AUDIO_STORAGE_DIR || '/var/www/vibestream/audio';
+    this.audioDir = process.env.AUDIO_STORAGE_DIR || '/home/frank-loui-lapore/vibestream/audio~';
     this.tempDir = process.env.TEMP_STORAGE_DIR || '/tmp/vibestream';
     this.maxCacheSizeMB = parseInt(process.env.MAX_CACHE_SIZE_MB) || 5000;
     

@@ -17,6 +17,8 @@ const streamRoutes = require('./routes/stream');
 const aiRoutes = require('./routes/ai');
 const playlistRoutes = require('./routes/playlist');
 const authRoutes = require('./routes/auth'); // ✅ NEW: Auth routes
+const historyRoutes = require('./routes/history');
+
 
 // Middleware
 app.use(cors());
@@ -32,7 +34,7 @@ app.use((req, res, next) => {
 app.use('/api/tracks', trackRoutes);
 
 // Serve static audio files from storage directory
-const audioDir = process.env.AUDIO_STORAGE_DIR || '/var/www/vibestream/audio';
+const audioDir = process.env.AUDIO_STORAGE_DIR || '/home/frank-loui-lapore/vibestream/audio';
 app.use('/audio', express.static(audioDir));
 
 // Health check endpoint
@@ -95,6 +97,7 @@ app.use('/api/search', searchRoutes);
 app.use('/api/stream', streamRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/playlists', playlistRoutes);
+app.use('/api/history', historyRoutes);
 
 // 404 handler for undefined routes
 app.use((req, res) => {

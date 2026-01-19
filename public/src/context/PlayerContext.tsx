@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { Track } from '../types/types';
 import { streamAPI, searchAPI } from '../services/api';
 import { useDownloads } from './DownloadContext';
+import { useHistory } from './HistoryContext'; // ✅ Import but don't call here
 
 interface PlayerContextType {
   currentTrack: Track | null;
@@ -20,7 +21,7 @@ interface PlayerContextType {
   playbackMode: PlaybackMode;
   toggleShuffle: () => void;
   toggleRepeat: () => void;
-  refreshSmartShuffle: (track: Track) => Promise<void>; // Add this line
+  refreshSmartShuffle: (track: Track) => Promise<void>;
 }
 
 interface Toast {
@@ -30,11 +31,11 @@ interface Toast {
 
 export type PlaybackMode = 'normal' | 'repeat-one' | 'smart-shuffle';
 
-
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-
+  // ✅ CORRECT: Call useHistory() INSIDE the component
+  const { addToHistory } = useHistory();
 
   const [toast, setToast] = useState<Toast>({ message: '', visible: false });
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('normal');
@@ -45,8 +46,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [volume, setVolumeState] = useState(0.8);
   const [playlist, setPlaylist] = useState<Track[]>([]);
   const [isPlayingOffline, setIsPlayingOffline] = useState(false);
-
-  
 
   const refreshSmartShuffle = useCallback(async (track: Track) => {
     try {
@@ -60,9 +59,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, []);
 
-
-  
-
   // Get download functions
   const { isDownloaded, getOfflineAudioUrl } = useDownloads();
 
@@ -72,16 +68,16 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Keep track of current object URL for cleanup
   const currentObjectUrlRef = useRef<string | null>(null);
 
-const showToast = (message: string) => {
-  setToast({ message, visible: true });
-  
-  // Hide toast after 2 seconds
-  setTimeout(() => {
-    setToast({ message: '', visible: false }); // Clear message here
-  }, 2000);
-};
+  const showToast = (message: string) => {
+    setToast({ message, visible: true });
+    
+    // Hide toast after 2 seconds
+    setTimeout(() => {
+      setToast({ message: '', visible: false });
+    }, 2000);
+  };
 
-const toggleShuffle = useCallback(() => {
+  const toggleShuffle = useCallback(() => {
     setPlaybackMode(prev => {
       const newMode = prev === 'smart-shuffle' ? 'normal' : 'smart-shuffle';
       showToast(newMode === 'smart-shuffle' ? 'smart-shuffle on' : 'shuffle off');
@@ -92,43 +88,12 @@ const toggleShuffle = useCallback(() => {
     });
   }, [currentTrack, refreshSmartShuffle]);
 
-
-
-const toggleRepeat = useCallback(() => {
+  const toggleRepeat = useCallback(() => {
     setPlaybackMode(prev => {
       const newMode = prev === 'repeat-one' ? 'normal' : 'repeat-one';
       showToast(newMode === 'repeat-one' ? 'repeat song' : 'repeat off');
       return newMode;
     });
-  }, []);
-
-
-  // Initialize audio element
-  useEffect(() => {
-    const audio = new Audio();
-    audio.volume = volume;
-    audioRef.current = audio;
-
-    // Audio event listeners
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('ended', handleTrackEnd);
-    audio.addEventListener('error', handleAudioError);
-    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-
-    return () => {
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('ended', handleTrackEnd);
-      audio.removeEventListener('error', handleAudioError);
-      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.pause();
-      audio.src = '';
-
-      // Cleanup object URL
-      if (currentObjectUrlRef.current) {
-        URL.revokeObjectURL(currentObjectUrlRef.current);
-        currentObjectUrlRef.current = null;
-      }
-    };
   }, []);
 
   // Handle time update
@@ -137,9 +102,6 @@ const toggleRepeat = useCallback(() => {
       setProgress(audioRef.current.currentTime);
     }
   };
-
-  // Handle track end
-
 
   // Handle audio error
   const handleAudioError = async (e: Event) => {
@@ -151,7 +113,6 @@ const toggleRepeat = useCallback(() => {
       setIsPlayingOffline(false);
 
       try {
-        // ✅ Use authenticated stream for fallback
         const streamUrl = await streamAPI.getAuthenticatedStreamUrl(currentTrack.videoId);
         currentObjectUrlRef.current = streamUrl;
 
@@ -173,29 +134,42 @@ const toggleRepeat = useCallback(() => {
     console.log('✅ Audio metadata loaded');
   };
 
+  // Handle track end
+  const handleTrackEnd = useCallback(() => {
+    if (playbackMode === 'repeat-one') {
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play();
+      }
+    } else if (playbackMode === 'smart-shuffle' && aiQueue.length > 0) {
+      const nextAiTrack = aiQueue[0];
+      setAiQueue(prev => prev.slice(1));
+      playTrack(nextAiTrack);
+    } else {
+      nextTrack();
+    }
+  }, [playbackMode, aiQueue]);
+
   // Play a track
   const playTrack = useCallback(async (track: Track) => {
     if (!track || !track.videoId) return;
 
+    // ✅ Add to listening history
+    addToHistory(track);
+
     // 1. INSTANTLY KILL OLD AUDIO
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.src = ""; // This forces the browser to drop the old stream immediately
-      audioRef.current.load();   // Clears the buffer
+      audioRef.current.src = "";
+      audioRef.current.load();
     }
 
     // 2. Update UI state immediately
     setCurrentTrack(track);
     setProgress(0);
-    setIsPlaying(false); // Optional: keep false until the new song starts
+    setIsPlaying(false);
 
-    // ... Now proceed with the slow async fetching
     console.log('🎵 Fetching new stream for:', track.title);
-
-
-    console.log('🎵 Playing track:', track.title);
-    setCurrentTrack(track);
-    setProgress(0);
 
     // Cleanup previous object URL if exists
     if (currentObjectUrlRef.current) {
@@ -212,13 +186,12 @@ const toggleRepeat = useCallback(() => {
         if (offlineUrl) {
           console.log('🔌 Playing offline:', track.title);
           setIsPlayingOffline(true);
-          currentObjectUrlRef.current = offlineUrl; // Store for cleanup
+          currentObjectUrlRef.current = offlineUrl;
 
           if (audioRef.current) {
             audioRef.current.src = offlineUrl;
             audioRef.current.load();
 
-            // Play audio
             audioRef.current.play()
               .then(() => {
                 setIsPlaying(true);
@@ -229,7 +202,6 @@ const toggleRepeat = useCallback(() => {
                 setIsPlaying(false);
                 setIsPlayingOffline(false);
 
-                // ✅ Fallback to authenticated online stream
                 console.log('🌐 Falling back to authenticated online stream...');
                 try {
                   const streamUrl = await streamAPI.getAuthenticatedStreamUrl(track.videoId);
@@ -247,7 +219,7 @@ const toggleRepeat = useCallback(() => {
                 }
               });
           }
-          return; // Exit early for offline playback
+          return;
         }
       } catch (error) {
         console.error('❌ Failed to get offline audio:', error);
@@ -255,19 +227,18 @@ const toggleRepeat = useCallback(() => {
       }
     }
 
-    // ✅ Play online with authentication (either not downloaded or offline failed)
+    // Play online with authentication
     console.log('🌐 Playing online with authentication:', track.title);
     setIsPlayingOffline(false);
 
     try {
       const streamUrl = await streamAPI.getAuthenticatedStreamUrl(track.videoId);
-      currentObjectUrlRef.current = streamUrl; // Store for cleanup
+      currentObjectUrlRef.current = streamUrl;
 
       if (audioRef.current) {
         audioRef.current.src = streamUrl;
         audioRef.current.load();
 
-        // Play audio
         audioRef.current.play()
           .then(() => {
             setIsPlaying(true);
@@ -282,7 +253,7 @@ const toggleRepeat = useCallback(() => {
       console.error('❌ Failed to get authenticated stream:', error);
       setIsPlaying(false);
     }
-  }, [isDownloaded, getOfflineAudioUrl]);
+  }, [isDownloaded, getOfflineAudioUrl, addToHistory]);
 
   // Toggle play/pause
   const togglePlay = useCallback(() => {
@@ -345,38 +316,38 @@ const toggleRepeat = useCallback(() => {
     }
   }, []);
 
+  // Initialize audio element
+  useEffect(() => {
+    const audio = new Audio();
+    audio.volume = volume;
+    audioRef.current = audio;
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('ended', handleTrackEnd);
+    audio.addEventListener('error', handleAudioError);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('ended', handleTrackEnd);
+      audio.removeEventListener('error', handleAudioError);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      audio.pause();
+      audio.src = '';
+
+      if (currentObjectUrlRef.current) {
+        URL.revokeObjectURL(currentObjectUrlRef.current);
+        currentObjectUrlRef.current = null;
+      }
+    };
+  }, [handleTrackEnd]);
+
   // Update audio volume when volume state changes
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = volume;
     }
   }, [volume]);
-
-
-  const handleTrackEnd = useCallback(() => {
-    if (playbackMode === 'repeat-one') {
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play();
-      }
-    } else if (playbackMode === 'smart-shuffle' && aiQueue.length > 0) {
-      const nextAiTrack = aiQueue[0];
-      setAiQueue(prev => prev.slice(1));
-      playTrack(nextAiTrack);
-    } else {
-      nextTrack();
-    }
-  }, [playbackMode, aiQueue, playTrack, nextTrack]);
-
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.removeEventListener('ended', handleTrackEnd);
-    audio.addEventListener('ended', handleTrackEnd);
-    return () => audio.removeEventListener('ended', handleTrackEnd);
-  }, [handleTrackEnd]);
-
 
   return (
     <PlayerContext.Provider
@@ -397,6 +368,7 @@ const toggleRepeat = useCallback(() => {
         playbackMode,
         toggleShuffle,
         toggleRepeat,
+        refreshSmartShuffle,
       }}
     >
       {children} 
@@ -407,7 +379,6 @@ const toggleRepeat = useCallback(() => {
           </div>
         </div>
       )}
-      
     </PlayerContext.Provider>
   );
 };
@@ -417,5 +388,3 @@ export const usePlayer = () => {
   if (!context) throw new Error('usePlayer must be used within PlayerProvider');
   return context;
 };
-
-

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Play } from 'lucide-react';
 import { Playlist, Track } from '../types/types';
@@ -6,6 +6,7 @@ import { usePlayer } from '../context/PlayerContext';
 import { useLibrary } from '../context/LibraryContext';
 import { useLikes } from '../context/LikeContext';
 import { useDownloads } from '../context/DownloadContext';
+import { useHistory } from '../context/HistoryContext'; // ✅ NEW
 import { searchAPI } from '../services/api';
 import TrackOptionsMenu from '../components/TrackOptionsMenu';
 import AddToPlaylistModal from '../components/AddToPlayListModal';
@@ -34,7 +35,7 @@ const PlaylistCard: React.FC<PlaylistCardProps> = ({ playlist }) => {
   );
 };
 
-interface HistoryCardProps {
+interface TrackCardProps {
   track: Track;
   onAddToPlaylist: (track: Track) => void;
   onToggleLike: (track: Track) => void;
@@ -44,7 +45,7 @@ interface HistoryCardProps {
   isPlaylistModalOpen: boolean;
 }
 
-const HistoryCard: React.FC<HistoryCardProps> = ({
+const TrackCard: React.FC<TrackCardProps> = ({
   track,
   onAddToPlaylist,
   onToggleLike,
@@ -97,8 +98,9 @@ const Home: React.FC = () => {
 
   const { playlists, isLoading: playlistsLoading } = useLibrary();
   const { setPlaylist } = usePlayer();
-  const { isLiked, toggleLike } = useLikes();
+  const { isLiked, toggleLike, likedTracks } = useLikes();
   const { isDownloaded, downloadTrack } = useDownloads();
+  const { getRecentTracks } = useHistory(); // ✅ NEW
 
   const [trendingTracks, setTrendingTracks] = useState<Track[]>([]);
   const [isLoadingTrending, setIsLoadingTrending] = useState(false);
@@ -110,7 +112,10 @@ const Home: React.FC = () => {
 
   const [showRetry, setShowRetry] = useState(false);
 
-  // Load trending music on mountx
+  // ✅ Get recently played tracks
+  const recentlyPlayed = getRecentTracks(10);
+
+  // Load trending music on mount
   useEffect(() => {
     loadTrending();
   }, []);
@@ -121,16 +126,15 @@ const Home: React.FC = () => {
   const loadTrending = async () => {
     setIsLoadingTrending(true);
     setTrendingError(null);
-    setShowRetry(false); // hide retry immediately
+    setShowRetry(false);
 
-    const errorDelay = 5000; // 5 seconds
+    const errorDelay = 5000;
     const startTime = Date.now();
 
     try {
       console.log('🔥 Loading trending music...');
       const tracks = await searchAPI.getTrending();
 
-      // ✅ SUCCESS → return immediately
       setTrendingTracks(tracks);
       console.log(`✅ Loaded ${tracks.length} trending tracks`);
       setIsLoadingTrending(false);
@@ -144,17 +148,15 @@ const Home: React.FC = () => {
       console.error('❌ Failed to load trending:', errorMsg);
       setTrendingError(errorMsg);
 
-      // ❌ ERROR → enforce minimum wait before retry appears
       const elapsed = Date.now() - startTime;
       const remaining = Math.max(errorDelay - elapsed, 0);
 
       setTimeout(() => {
-        setIsLoadingTrending(false); // stop spinner
-        setShowRetry(true);          // now allow retry
+        setIsLoadingTrending(false);
+        setShowRetry(true);
       }, remaining);
     }
   };
-
 
   /**
    * Handle playlist click from quick grid
@@ -181,7 +183,7 @@ const Home: React.FC = () => {
   };
 
   /**
-   * Handle download for offline (Spotify-style - saves to IndexedDB)
+   * Handle download for offline
    */
   const handleDownload = async (track: Track) => {
     try {
@@ -194,19 +196,118 @@ const Home: React.FC = () => {
     }
   };
 
-  const categories = ["All", "Music", "Podcasts"]
+  // ✅ RANDOMIZE SECTIONS - Create sections array and shuffle
+  const sections = useMemo(() => {
+    const allSections = [];
+
+
+        // Trending Section
+    if (trendingTracks.length > 0) {
+      allSections.push({
+        id: 'trending',
+        title: 'Trending Now',
+        showRefresh: true,
+        component: (
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth">
+            {trendingTracks.slice(0, 10).map(track => (
+              <TrackCard
+                key={track.id}
+                track={track}
+                onAddToPlaylist={handleAddToPlaylist}
+                onToggleLike={handleToggleLike}
+                onDownload={handleDownload}
+                isLiked={isLiked(track.id)}
+                isDownloaded={isDownloaded(track.id)}
+                isPlaylistModalOpen={isPlaylistModalOpen}
+              />
+            ))}
+          </div>
+        )
+      });
+    }
+    
+    // Recently Played Section
+    if (recentlyPlayed.length > 0) {
+      allSections.push({
+        id: 'recently-played',
+        title: 'Recently Played',
+        component: (
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth">
+            {recentlyPlayed.map((track, index) => (
+              <TrackCard
+                key={track.historyId || `${track.id}-${index}`}
+                track={track}
+                onAddToPlaylist={handleAddToPlaylist}
+                onToggleLike={handleToggleLike}
+                onDownload={handleDownload}
+                isLiked={isLiked(track.id)}
+                isDownloaded={isDownloaded(track.id)}
+                isPlaylistModalOpen={isPlaylistModalOpen}
+              />
+            ))}
+          </div>
+        )
+      });
+    }
+
+    // Liked Songs Section
+    if (likedTracks.length > 0) {
+      allSections.push({
+        id: 'liked-songs',
+        title: 'Your Liked Songs',
+        component: (
+          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth">
+            {likedTracks.slice(0, 10).map(track => (
+              <TrackCard
+                key={track.id}
+                track={track}
+                onAddToPlaylist={handleAddToPlaylist}
+                onToggleLike={handleToggleLike}
+                onDownload={handleDownload}
+                isLiked={true}
+                isDownloaded={isDownloaded(track.id)}
+                isPlaylistModalOpen={isPlaylistModalOpen}
+              />
+            ))}
+          </div>
+        )
+      });
+    }
+
+    // User's Playlists Section
+    if (playlists.length > 0) {
+      allSections.push({
+        id: 'your-playlists',
+        title: 'Your Playlists',
+        component: (
+          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0">
+            {playlists.map(p => <PlaylistCard key={p.id} playlist={p} />)}
+          </div>
+        )
+      });
+    }
+
+
+
+    // ✅ Shuffle the sections randomly
+    return allSections;
+  }, [recentlyPlayed, likedTracks, playlists, trendingTracks, isPlaylistModalOpen]);
+
+  const categories = ["All", "Music", "Podcasts"];
   const blueShades = [
     'bg-blue-700',
     'bg-blue-600',
     'bg-blue-500',
     'bg-blue-700',
     'bg-blue-800',
-    'bg-blue-900']
+    'bg-blue-900'
+  ];
+
   return (
     <div className="space-y-10 animate-in fade-in duration-500">
       {/* 1. Greeting & Quick Grid */}
       <header>
-        <div className="flex overflow-x-auto gap-2 pb-2 no-scrollbar"> {/* Parent container wraps the map */}
+        <div className="flex overflow-x-auto gap-2 pb-2 no-scrollbar">
           {categories.map((c, index) => (
             <div key={c} className={`flex-shrink-0 p-2 px-4 rounded-2xl ${blueShades[index % blueShades.length]}`}>
               <p className="text-sm font-medium text-white">{c}</p>
@@ -214,16 +315,8 @@ const Home: React.FC = () => {
           ))}
         </div>
 
-
-
-
-
-
-
-
-        {/*Make some playlist recommendations for this section */}
-
-        <h1 className="text-2xl md:text-4xl font-black mb-6 tracking-tight">{greeting}</h1>
+        <h1 className="text-2xl md:text-4xl font-black mb-6 tracking-tight mt-4">{greeting}</h1>
+        
         {playlistsLoading ? (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -246,35 +339,32 @@ const Home: React.FC = () => {
               </div>
             ))}
           </div>
-
-
-
-
-
-
-
-
-
-
-
         )}
       </header>
 
-      {/* 2. Trending / Listening History Section */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl md:text-2xl font-bold tracking-tight">Trending Now</h2>
-          {!isLoadingTrending && !trendingError && (
-            <button
-              onClick={loadTrending}
-              className="text-xs font-bold text-zinc-400 hover:text-white hover:underline"
-            >
-              Refresh
-            </button>
-          )}
-        </div>
+      {/* ✅ RANDOMIZED SECTIONS */}
+      {sections.map((section) => (
+        <section key={section.id}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl md:text-2xl font-bold tracking-tight">{section.title}</h2>
+            {section.showRefresh && !isLoadingTrending && !trendingError && (
+              <button
+                onClick={loadTrending}
+                className="text-xs font-bold text-zinc-400 hover:text-white hover:underline"
+              >
+                Refresh
+              </button>
+            )}
+          </div>
 
-        {isLoadingTrending && (
+          {section.component}
+        </section>
+      ))}
+
+      {/* Trending Loading State */}
+      {isLoadingTrending && (
+        <section>
+          <h2 className="text-xl md:text-2xl font-bold tracking-tight mb-4">Loading...</h2>
           <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0">
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <div key={i} className="w-[140px] md:w-[180px] flex-shrink-0">
@@ -284,9 +374,12 @@ const Home: React.FC = () => {
               </div>
             ))}
           </div>
-        )}
+        </section>
+      )}
 
-        {!isLoadingTrending && trendingError && showRetry && (
+      {/* Trending Error State */}
+      {!isLoadingTrending && trendingError && showRetry && (
+        <section>
           <div className="rounded-lg p-4 text-center">
             <WifiOff className="mx-auto mb-2 text-red-400" size={32} />
             <button
@@ -296,67 +389,14 @@ const Home: React.FC = () => {
               Try again
             </button>
           </div>
-        )}
+        </section>
+      )}
 
-        {!isLoadingTrending && !trendingError && trendingTracks.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0 scroll-smooth">
-            {trendingTracks.slice(0, 10).map(track => (
-              <HistoryCard
-                key={track.id}
-                track={track}
-                onAddToPlaylist={handleAddToPlaylist}
-                onToggleLike={handleToggleLike}
-                onDownload={handleDownload}
-                isLiked={isLiked(track.id)}
-                isDownloaded={isDownloaded(track.id)}
-                isPlaylistModalOpen={isPlaylistModalOpen}
-              />
-            ))}
-          </div>
-        )}
-
-        {!isLoadingTrending && !trendingError && trendingTracks.length === 0 && (
-          <div className="text-center py-10 text-zinc-400">
-            <p>No trending tracks available</p>
-          </div>
-        )}
-      </section>
-
-      {/* 3. Made for You */}
-      <section>
-        <h2 className="text-xl md:text-2xl font-bold mb-4 tracking-tight">Your Playlists</h2>
-
-        {playlistsLoading ? (
-          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="w-[160px] md:w-[200px] flex-shrink-0">
-                <div className="aspect-square bg-zinc-800 rounded-lg mb-4 animate-pulse" />
-                <div className="h-4 bg-zinc-800 rounded mb-2 animate-pulse" />
-                <div className="h-3 bg-zinc-800 rounded w-2/3 animate-pulse" />
-              </div>
-            ))}
-          </div>
-        ) : playlists.length > 0 ? (
-          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0">
-            {playlists.map(p => <PlaylistCard key={p.id} playlist={p} />)}
-          </div>
-        ) : (
-          <div className="text-center py-10">
-            <p className="text-zinc-400 mb-4">You haven't created any playlists yet</p>
-            <button className="bg-blue-600 text-black px-6 py-3 rounded-full font-bold hover:scale-105 transition">
-              Create Your First Playlist
-            </button>
-          </div>
-        )}
-      </section>
-
-      {/* 4. Popular Playlists (Same as Your Playlists but reversed for variety) */}
-      {playlists.length > 3 && (
-        <section className="pb-8">
-          <h2 className="text-xl md:text-2xl font-bold mb-4 tracking-tight">Jump Back In</h2>
-          <div className="flex gap-4 overflow-x-auto no-scrollbar pb-4 -mx-4 px-4 md:mx-0 md:px-0">
-            {[...playlists].reverse().map(p => <PlaylistCard key={p.id} playlist={p} />)}
-          </div>
+      {/* Empty State - No Content */}
+      {sections.length === 0 && !isLoadingTrending && (
+        <section className="text-center py-20">
+          <p className="text-zinc-400 text-lg mb-4">Start exploring music!</p>
+          <p className="text-zinc-500 text-sm">Your listening history and favorites will appear here</p>
         </section>
       )}
 

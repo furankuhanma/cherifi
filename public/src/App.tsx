@@ -5,7 +5,7 @@ import Home from './pages/Home';
 import Search from './pages/Search';
 import Library from './pages/Library';
 import PlaylistDetail from './pages/PlaylistDetail';
-import OfflineLibrary from './pages/OfflineLibrary'; // ✅ Import the component, not the service
+import OfflineLibrary from './pages/OfflineLibrary';
 import AIChat from './pages/AIChat';
 import AuthScreen from './pages/AuthScreen';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -14,6 +14,7 @@ import { LibraryProvider } from './context/LibraryContext';
 import { AuthProvider } from './context/AuthContext';
 import { LikeProvider } from './context/LikeContext';
 import { DownloadProvider } from './context/DownloadContext';
+import { HistoryProvider } from './context/HistoryContext'; // ✅ NEW
 
 const App: React.FC = () => {
   return (
@@ -21,40 +22,42 @@ const App: React.FC = () => {
       <LikeProvider>
         <DownloadProvider>
           <LibraryProvider>
-            <PlayerProvider>
-              <Router>
-                <Routes>
-                  {/* Public: Auth screen */}
-                  <Route path="/auth" element={<AuthScreen />} />
-                  
-                  {/* Protected: AI Chat */}
-                  <Route 
-                    path="/ai-chat" 
-                    element={
-                      <ProtectedRoute>
-                        <AIChat />
-                      </ProtectedRoute>
-                    } 
-                  />
-                  
-                  {/* Protected: Main app with Layout */}
-                  <Route 
-                    path="/" 
-                    element={
-                      <ProtectedRoute>
-                        <Layout />
-                      </ProtectedRoute>
-                    }
-                  >
-                    <Route index element={<Home />} />
-                    <Route path="search" element={<Search />} />
-                    <Route path="library" element={<Library />} />
-                    <Route path="offline" element={<OfflineLibrary />} /> {/* ✅ Fixed: Use component */}
-                    <Route path="playlist/:id" element={<PlaylistDetail />} />
-                  </Route>
-                </Routes>
-              </Router>
-            </PlayerProvider>
+            <HistoryProvider> {/* ✅ NEW: Wrap with HistoryProvider */}
+              <PlayerProvider>
+                <Router>
+                  <Routes>
+                    {/* Public: Auth screen */}
+                    <Route path="/auth" element={<AuthScreen />} />
+                    
+                    {/* Protected: AI Chat */}
+                    <Route 
+                      path="/ai-chat" 
+                      element={
+                        <ProtectedRoute>
+                          <AIChat />
+                        </ProtectedRoute>
+                      } 
+                    />
+                    
+                    {/* Protected: Main app with Layout */}
+                    <Route 
+                      path="/" 
+                      element={
+                        <ProtectedRoute>
+                          <Layout />
+                        </ProtectedRoute>
+                      }
+                    >
+                      <Route index element={<Home />} />
+                      <Route path="search" element={<Search />} />
+                      <Route path="library" element={<Library />} />
+                      <Route path="offline" element={<OfflineLibrary />} />
+                      <Route path="playlist/:id" element={<PlaylistDetail />} />
+                    </Route>
+                  </Routes>
+                </Router>
+              </PlayerProvider>
+            </HistoryProvider> {/* ✅ NEW */}
           </LibraryProvider>
         </DownloadProvider>
       </LikeProvider>

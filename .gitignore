@@ -11,7 +11,7 @@ pnpm-lock.yaml
 
 # Audio cache and storage
 audio_cache/
-/var/www/vibestream/audio/
+/home/frank-loui-lapore/vibestream/audio
 /tmp/vibestream/
 *.mp3
 *.m4a
