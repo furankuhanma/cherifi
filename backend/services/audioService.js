@@ -6,7 +6,7 @@ const Track = require('../models/Track');
 class AudioService {
   constructor() {
     this.audioDir = process.env.AUDIO_STORAGE_DIR || '/home/frank-loui-lapore/vibestream/audio';
-    this.maxCacheSizeMB = parseInt(process.env.MAX_CACHE_SIZE_MB) || 5000;
+    this.maxCacheSizeMB = parseInt(process.env.MAX_CACHE_SIZE_MB) || 10000;
     
     this.ensureDirectories();
   }
@@ -24,6 +24,7 @@ class AudioService {
    * Download and convert YouTube video to MP3
    * ✅ OPTIMIZED: Skips YouTube metadata fetch for cached files (16x faster)
    * ✅ FIXED: Separate metadata fetch and download calls
+   * ✅ FIXED: Proper file verification with retry logic
    */
   async downloadAudio(videoId) {
     const outputFilename = `${videoId}.mp3`;
@@ -96,14 +97,14 @@ class AudioService {
       console.log(`📋 Metadata extracted: ${metadata.title} - ${metadata.artist}`);
 
       // 5. ✅ STEP 2: Download audio and convert to MP3
-      // Note: Using %(id)s.%(ext)s pattern to ensure correct filename
+      // ✅ FIX: Use direct output path to avoid extension template issues
       console.log(`⬇️ Downloading audio file...`);
       
       await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
         extractAudio: true,
         audioFormat: 'mp3',
         audioQuality: '9',
-        output: path.join(this.audioDir, `${videoId}.%(ext)s`),
+        output: outputPath, // ✅ CHANGED: Direct path instead of template
         noCheckCertificates: true,
         noWarnings: true,
         preferFreeFormats: true,
@@ -112,8 +113,22 @@ class AudioService {
 
       console.log(`✅ Download completed, verifying file...`);
 
-      // 6. Verify file was created
-      const fileExists = await this.fileExists(outputPath);
+      // 6. ✅ IMPROVED: Wait and verify file with retry (handles conversion delay)
+      let fileExists = false;
+      let attempts = 0;
+      const maxAttempts = 10; // Increased from 5 to 10 for slower systems
+      const retryDelay = 500; // 500ms between checks
+
+      while (!fileExists && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        fileExists = await this.fileExists(outputPath);
+        attempts++;
+        
+        if (!fileExists && attempts < maxAttempts) {
+          console.log(`⏳ Waiting for file conversion... (attempt ${attempts}/${maxAttempts})`);
+        }
+      }
+
       if (!fileExists) {
         // List directory to see what was actually created
         const files = await fs.readdir(this.audioDir);
@@ -122,7 +137,24 @@ class AudioService {
         console.error(`❌ Expected file not found: ${outputPath}`);
         console.error(`📁 Files found starting with ${videoId}:`, matchingFiles);
         
-        throw new Error(`Download completed but file not found. Found: ${matchingFiles.join(', ')}`);
+        // ✅ NEW: Try to find and rename if wrong extension
+        if (matchingFiles.length > 0) {
+          const wrongFile = matchingFiles[0];
+          const wrongPath = path.join(this.audioDir, wrongFile);
+          
+          console.log(`🔄 Found ${wrongFile}, attempting to rename to ${outputFilename}`);
+          
+          try {
+            await fs.rename(wrongPath, outputPath);
+            console.log(`✅ Successfully renamed to ${outputFilename}`);
+            fileExists = true;
+          } catch (renameErr) {
+            console.error(`❌ Rename failed:`, renameErr.message);
+            throw new Error(`Download completed but file has wrong extension: ${wrongFile}`);
+          }
+        } else {
+          throw new Error(`Download completed but file not found. Found: ${matchingFiles.join(', ')}`);
+        }
       }
 
       // 7. Update Database local status
@@ -185,6 +217,9 @@ class AudioService {
     }
   }
 
+  /**
+   * Check if file exists on disk
+   */
   async fileExists(filePath) {
     try {
       await fs.access(filePath);
@@ -194,6 +229,9 @@ class AudioService {
     }
   }
 
+  /**
+   * Get total storage usage in MB
+   */
   async getStorageUsage() {
     try {
       const files = await fs.readdir(this.audioDir);
@@ -208,10 +246,15 @@ class AudioService {
     }
   }
 
+  /**
+   * Clean up old files when cache size exceeds limit
+   */
   async cleanupOldFiles() {
     try {
       const totalSize = await this.getStorageUsage();
       if (totalSize > this.maxCacheSizeMB) {
+        console.log(`🧹 Cache size (${totalSize.toFixed(2)} MB) exceeds limit (${this.maxCacheSizeMB} MB), cleaning up...`);
+        
         const files = await fs.readdir(this.audioDir);
         const fileStats = [];
 
@@ -221,6 +264,7 @@ class AudioService {
           fileStats.push({ name: file, path: filePath, atime: stats.atime });
         }
 
+        // Sort by access time (oldest first)
         fileStats.sort((a, b) => a.atime - b.atime);
 
         // Delete oldest 20%
@@ -237,10 +281,13 @@ class AudioService {
         console.log(`🧹 Cleanup: Deleted ${deleteCount} old files`);
       }
     } catch (error) {
-      console.error('Cleanup error:', error);
+      console.error('❌ Cleanup error:', error);
     }
   }
 
+  /**
+   * Delete a specific audio file
+   */
   async deleteAudio(videoId) {
     const filePath = path.join(this.audioDir, `${videoId}.mp3`);
     try {
@@ -252,6 +299,9 @@ class AudioService {
     }
   }
 
+  /**
+   * Get storage statistics
+   */
   async getStorageStats() {
     const files = await fs.readdir(this.audioDir);
     const totalSize = await this.getStorageUsage();

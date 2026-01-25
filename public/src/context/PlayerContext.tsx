@@ -7,9 +7,9 @@ import React, {
   useRef,
 } from "react";
 import { Track } from "../types/types";
-import { streamAPI, searchAPI } from "../services/api";
+import { streamAPI, searchAPI, aiAPI } from "../services/api";
 import { useDownloads } from "./DownloadContext";
-import { useHistory } from "./HistoryContext"; // ✅ Import but don't call here
+import { useHistory } from "./HistoryContext";
 
 interface PlayerContextType {
   currentTrack: Track | null;
@@ -43,7 +43,6 @@ const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  // ✅ CORRECT: Call useHistory() INSIDE the component
   const { addToHistory } = useHistory();
 
   const [toast, setToast] = useState<Toast>({ message: "", visible: false });
@@ -56,33 +55,85 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
   const [playlist, setPlaylist] = useState<Track[]>([]);
   const [isPlayingOffline, setIsPlayingOffline] = useState(false);
 
-  const refreshSmartShuffle = useCallback(async (track: Track) => {
-    try {
-      console.log("🪄 Fetching Smart Shuffle tracks for:", track.artist);
-      const results = await searchAPI.search(`${track.artist} mix`);
-      const recommendations = results
-        .filter((t) => t.videoId !== track.videoId)
-        .slice(0, 20);
-      setAiQueue(recommendations);
-      return recommendations;
-    } catch (err) {
-      console.error("Smart Shuffle failed", err);
-    }
-  }, []);
+  // ✅ NEW: Track which song has been prefetched
+  const prefetchedTrackRef = useRef<string | null>(null);
+  const hasPrefetchedRef = useRef<boolean>(false);
 
-  // Get download functions
+  // ============================================
+  // 🎵 REPLACE the refreshSmartShuffle function in PlayerContext.tsx
+  // Find this function (around line 47) and REPLACE it with this:
+  // ============================================
+
+  const refreshSmartShuffle = useCallback(
+    async (track: Track) => {
+      try {
+        console.log(
+          "🎯 Fetching Spotify-style recommendations for:",
+          track.title,
+        );
+
+        // Get last 5 tracks from playlist for context
+        const recentTracks = playlist.slice(-5);
+
+        // Call new AI-powered recommendations endpoint
+        const { analysis, recommendations } =
+          await aiAPI.getSmartRecommendations(
+            track,
+            recentTracks,
+            20, // Get 20 recommendations for better variety
+          );
+
+        if (recommendations.length === 0) {
+          console.warn("⚠️ No AI recommendations, falling back to search");
+          // Fallback to simple search if AI fails
+          const fallbackResults = await searchAPI.search(`${track.artist} mix`);
+          const filtered = fallbackResults
+            .filter((t) => t.videoId !== track.videoId)
+            .slice(0, 15);
+          setAiQueue(filtered);
+          return filtered;
+        }
+
+        console.log(`✅ Got ${recommendations.length} smart recommendations`);
+        console.log(`📊 Genre: ${analysis.genre}, Mood: ${analysis.mood}`);
+
+        setAiQueue(recommendations);
+        return recommendations;
+      } catch (err) {
+        console.error("❌ Smart Shuffle failed:", err);
+
+        // Fallback: Use simple search if AI completely fails
+        try {
+          console.log("🔄 Using fallback search...");
+          const fallbackResults = await searchAPI.search(
+            `${track.artist} similar`,
+          );
+          const filtered = fallbackResults
+            .filter((t) => t.videoId !== track.videoId)
+            .slice(0, 15);
+          setAiQueue(filtered);
+          return filtered;
+        } catch (fallbackErr) {
+          console.error("❌ Fallback also failed:", fallbackErr);
+          return [];
+        }
+      }
+    },
+    [playlist],
+  );
+
+  // ============================================
+  // Important: Add aiAPI to the imports at the top of the file:
+  // import { streamAPI, searchAPI, aiAPI } from "../services/api";
+  // ============================================
+
   const { isDownloaded, getOfflineAudioUrl } = useDownloads();
 
-  // Audio element ref
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // Keep track of current object URL for cleanup
   const currentObjectUrlRef = useRef<string | null>(null);
 
   const showToast = (message: string) => {
     setToast({ message, visible: true });
-
-    // Hide toast after 2 seconds
     setTimeout(() => {
       setToast({ message: "", visible: false });
     }, 2000);
@@ -109,26 +160,104 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     });
   }, []);
 
-  // Handle time update
-  const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setProgress(audioRef.current.currentTime);
-    }
-  };
+  // ✅ NEW: Get the next track that will play
+  const getNextTrack = useCallback((): Track | null => {
+    if (!currentTrack) return null;
 
-  // Handle audio error
+    if (playbackMode === "repeat-one") {
+      return currentTrack; // Same track repeats
+    }
+
+    if (playbackMode === "smart-shuffle" && aiQueue.length > 0) {
+      return aiQueue[0]; // Next AI recommendation
+    }
+
+    if (playlist.length === 0) return null;
+
+    const currentIndex = playlist.findIndex((t) => t.id === currentTrack.id);
+    const nextIndex = (currentIndex + 1) % playlist.length;
+    return playlist[nextIndex];
+  }, [currentTrack, playlist, playbackMode, aiQueue]);
+
+  // ✅ NEW: Prefetch next track in background
+  const prefetchNextTrack = useCallback(async () => {
+    const nextTrack = getNextTrack();
+
+    if (!nextTrack || !nextTrack.videoId) {
+      console.log("⏭️ No next track to prefetch");
+      return;
+    }
+
+    // Don't prefetch if already downloaded or already prefetched
+    if (isDownloaded(nextTrack.id)) {
+      console.log("✅ Next track already cached:", nextTrack.title);
+      return;
+    }
+
+    if (prefetchedTrackRef.current === nextTrack.videoId) {
+      console.log("✅ Next track already prefetching:", nextTrack.title);
+      return;
+    }
+
+    try {
+      console.log("⬇️ Prefetching next track:", nextTrack.title);
+      prefetchedTrackRef.current = nextTrack.videoId;
+
+      // ✅ Call dedicated prefetch endpoint that downloads without streaming
+      const token = localStorage.getItem("auth_token");
+      const BASE_URL = import.meta.env.VITE_BACKEND_URL;
+
+      const response = await fetch(
+        `${BASE_URL}/api/stream/prefetch/${nextTrack.videoId}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: token ? `Bearer ${token}` : "",
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(
+          `✅ Prefetch complete: ${nextTrack.title} (${data.cached ? "was cached" : "downloaded"})`,
+        );
+      } else {
+        throw new Error(`Prefetch failed: ${response.status}`);
+      }
+    } catch (error) {
+      console.error("❌ Prefetch failed:", error);
+      prefetchedTrackRef.current = null;
+    }
+  }, [getNextTrack, isDownloaded]);
+
+  // ✅ ENHANCED: Handle time update with prefetch trigger
+  const handleTimeUpdate = useCallback(() => {
+    if (audioRef.current && currentTrack) {
+      const currentTime = audioRef.current.currentTime;
+      setProgress(currentTime);
+
+      // ✅ Trigger prefetch at 50% progress
+      const progressPercent = (currentTime / currentTrack.duration) * 100;
+
+      if (progressPercent >= 50 && !hasPrefetchedRef.current) {
+        console.log("🎯 50% reached - starting prefetch");
+        hasPrefetchedRef.current = true;
+        prefetchNextTrack();
+      }
+    }
+  }, [currentTrack, prefetchNextTrack]);
+
   const handleAudioError = async (e: Event) => {
     setIsPlaying(false);
 
-    // If offline playback failed, try online as fallback
     if (isPlayingOffline && currentTrack?.videoId) {
       console.log("🔄 Offline playback failed, trying online stream...");
       setIsPlayingOffline(false);
 
       try {
-        const streamUrl = await streamAPI.getAuthenticatedStreamUrl(
-          currentTrack.videoId,
-        );
+        const streamUrl = await streamAPI.getStreamUrl(currentTrack.videoId);
         currentObjectUrlRef.current = streamUrl;
 
         if (audioRef.current) {
@@ -144,12 +273,10 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   };
 
-  // Handle loaded metadata
   const handleLoadedMetadata = () => {
     console.log("✅ Audio metadata loaded");
   };
 
-  // Handle track end
   const handleTrackEnd = useCallback(() => {
     if (playbackMode === "repeat-one") {
       if (audioRef.current) {
@@ -165,42 +292,40 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [playbackMode, aiQueue]);
 
-  // Play a track
   const playTrack = useCallback(
     async (track: Track) => {
       if (!track || !track.videoId) return;
 
-      // ✅ Add to listening history
       addToHistory(track);
 
-      // 1. INSTANTLY KILL OLD AUDIO
+      // ✅ Reset prefetch state for new track
+      hasPrefetchedRef.current = false;
+      prefetchedTrackRef.current = null;
+
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = "";
         audioRef.current.load();
       }
 
-      // 2. Update UI state immediately
       setCurrentTrack(track);
       setProgress(0);
       setIsPlaying(false);
 
-      console.log("🎵 Fetching new stream for:", track.title);
+      console.log("🎵 Fetching stream for:", track.title);
 
-      // Cleanup previous object URL if exists
       if (currentObjectUrlRef.current) {
         URL.revokeObjectURL(currentObjectUrlRef.current);
         currentObjectUrlRef.current = null;
       }
 
-      // Check if track is downloaded for offline playback
+      // Check offline first
       if (track.videoId && isDownloaded(track.id)) {
         try {
-          console.log("🔌 Attempting offline playback...");
+          console.log("🔌 Playing from offline cache:", track.title);
           const offlineUrl = await getOfflineAudioUrl(track.videoId);
 
           if (offlineUrl) {
-            console.log("🔌 Playing offline:", track.title);
             setIsPlayingOffline(true);
             currentObjectUrlRef.current = offlineUrl;
 
@@ -219,27 +344,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
                   setIsPlaying(false);
                   setIsPlayingOffline(false);
 
-                  console.log(
-                    "🌐 Falling back to authenticated online stream...",
-                  );
-                  try {
-                    const streamUrl = await streamAPI.getStreamUrl(
-                      track.videoId,
-                    );
-                    currentObjectUrlRef.current = streamUrl;
+                  const streamUrl = await streamAPI.getStreamUrl(track.videoId);
+                  currentObjectUrlRef.current = streamUrl;
 
-                    if (audioRef.current) {
-                      audioRef.current.src = streamUrl;
-                      audioRef.current.load();
-                      audioRef.current.play().catch((err) => {
-                        console.error("❌ Online fallback also failed:", err);
-                      });
-                    }
-                  } catch (err) {
-                    console.error(
-                      "❌ Failed to get authenticated stream:",
-                      err,
-                    );
+                  if (audioRef.current) {
+                    audioRef.current.src = streamUrl;
+                    audioRef.current.load();
+                    audioRef.current.play();
                   }
                 });
             }
@@ -251,14 +362,12 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
         }
       }
 
-      // Play online with authentication
-      console.log("🌐 Playing online with authentication:", track.title);
+      // Play online
+      console.log("🌐 Playing online:", track.title);
       setIsPlayingOffline(false);
 
       try {
-        const streamUrl = await streamAPI.getAuthenticatedStreamUrl(
-          track.videoId,
-        );
+        const streamUrl = await streamAPI.getStreamUrl(track.videoId);
         currentObjectUrlRef.current = streamUrl;
 
         if (audioRef.current) {
@@ -269,7 +378,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
             .play()
             .then(() => {
               setIsPlaying(true);
-              console.log("✅ Online playback started (authenticated)");
+              console.log("✅ Online playback started");
             })
             .catch((error) => {
               console.error("❌ Online playback failed:", error);
@@ -277,14 +386,13 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
             });
         }
       } catch (error) {
-        console.error("❌ Failed to get authenticated stream:", error);
+        console.error("❌ Failed to get stream:", error);
         setIsPlaying(false);
       }
     },
     [isDownloaded, getOfflineAudioUrl, addToHistory],
   );
 
-  // Toggle play/pause
   const togglePlay = useCallback(() => {
     if (!audioRef.current || !currentTrack) return;
 
@@ -305,7 +413,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [isPlaying, currentTrack]);
 
-  // Next track
   const nextTrack = useCallback(() => {
     if (!currentTrack || playlist.length === 0) return;
 
@@ -316,7 +423,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     playTrack(playlist[nextIndex]);
   }, [currentTrack, playlist, playTrack]);
 
-  // Previous track
   const prevTrack = useCallback(() => {
     if (!currentTrack || playlist.length === 0) return;
 
@@ -327,7 +433,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     playTrack(playlist[prevIndex]);
   }, [currentTrack, playlist, playTrack]);
 
-  // Seek to position
   const seek = useCallback(
     (seconds: number) => {
       if (audioRef.current && currentTrack) {
@@ -339,7 +444,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     [currentTrack],
   );
 
-  // Set volume
   const setVolume = useCallback((vol: number) => {
     const clampedVolume = Math.max(0, Math.min(1, vol));
     setVolumeState(clampedVolume);
@@ -349,7 +453,6 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  // Initialize audio element
   useEffect(() => {
     const audio = new Audio();
     audio.volume = volume;
@@ -373,9 +476,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({
         currentObjectUrlRef.current = null;
       }
     };
-  }, [handleTrackEnd]);
+  }, [handleTrackEnd, handleTimeUpdate]);
 
-  // Update audio volume when volume state changes
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = volume;
