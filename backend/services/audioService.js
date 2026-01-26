@@ -1,79 +1,63 @@
 const youtubedl = require('youtube-dl-exec');
 const fs = require('fs').promises;
 const path = require('path');
+const os = require('os');
 const Track = require('../models/Track');
+const { uploadFile, fileExists, getStreamUrl } = require('../config/b2');
 
 class AudioService {
   constructor() {
-    this.audioDir = process.env.AUDIO_STORAGE_DIR || '/home/frank-loui-lapore/vibestream/audio';
-    this.maxCacheSizeMB = parseInt(process.env.MAX_CACHE_SIZE_MB) || 10000;
-    
+    // Use temp directory for downloads (will be uploaded to B2)
+    this.tempDir = path.join(os.tmpdir(), 'cherifi-audio');
     this.ensureDirectories();
   }
 
   async ensureDirectories() {
     try {
-      await fs.mkdir(this.audioDir, { recursive: true });
-      console.log('✅ Audio directories initialized');
+      await fs.mkdir(this.tempDir, { recursive: true });
+      console.log('✅ Temp audio directory initialized');
     } catch (error) {
-      console.error('❌ Failed to create directories:', error);
+      console.error('❌ Failed to create temp directory:', error);
     }
   }
 
   /**
-   * Download and convert YouTube video to MP3
-   * ✅ OPTIMIZED: Skips YouTube metadata fetch for cached files (16x faster)
-   * ✅ FIXED: Separate metadata fetch and download calls
-   * ✅ FIXED: Proper file verification with retry logic
+   * Download from YouTube and upload to B2
    */
   async downloadAudio(videoId) {
-    const outputFilename = `${videoId}.mp3`;
-    const outputPath = path.join(this.audioDir, outputFilename);
+    const filename = `${videoId}.mp3`;
+    const tempPath = path.join(this.tempDir, filename);
 
     try {
-      // 1. Check if file exists (cache hit)
-      const exists = await this.fileExists(outputPath);
-      if (exists) {
-        console.log(`⚡ Cache hit: ${videoId} - serving from disk`);
+      // 1. Check if already in B2
+      const existsInB2 = await fileExists(filename);
+      if (existsInB2) {
+        console.log(`⚡ B2 cache hit: ${videoId}`);
         
-        // ✅ OPTIMIZATION: Read metadata from database instead of YouTube
+        // Get metadata from DB
         const track = await Track.findByVideoId(videoId);
+        const streamUrl = await getStreamUrl(filename);
         
-        if (track) {
-          // Fast path: Use cached metadata from database
-          console.log(`📋 Using cached metadata from DB: ${track.title}`);
-          return { 
-            videoId, 
-            filePath: outputPath, 
-            cached: true,
-            metadata: {
-              title: track.title,
-              artist: track.artist,
-              album: track.album,
-              thumbnail: track.coverUrl,
-              duration: track.duration,
-              uploader: track.channelTitle,
-              channel: track.channelTitle,
-              view_count: track.viewCount
-            }
-          };
-        } else {
-          // Fallback: File exists but no DB entry (shouldn't happen, but safe)
-          console.warn(`⚠️ File cached but no DB entry for ${videoId}, fetching metadata`);
-          const metadata = await this.getMetadata(videoId);
-          return { 
-            videoId, 
-            filePath: outputPath, 
-            cached: true,
-            metadata
-          };
-        }
+        return {
+          videoId,
+          streamUrl,
+          cached: true,
+          metadata: track ? {
+            title: track.title,
+            artist: track.artist,
+            album: track.album,
+            thumbnail: track.coverUrl,
+            duration: track.duration,
+            uploader: track.channelTitle,
+            channel: track.channelTitle,
+            view_count: track.viewCount
+          } : null
+        };
       }
 
-      // 2. File not cached - proceed with full download
-      console.log(`⬇️ Starting YouTube Download: ${videoId}`);
+      console.log(`⬇️ Downloading from YouTube: ${videoId}`);
 
-      // 3. ✅ STEP 1: Fetch metadata (no download)
+      // 2. Fetch metadata
       const info = await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
         dumpSingleJson: true,
         noCheckCertificates: true,
@@ -82,106 +66,94 @@ class AudioService {
         addHeader: ['referer:youtube.com', 'user-agent:googlebot']
       });
 
-      // 4. Extract metadata
       const metadata = {
         title: info.title || 'Unknown Title',
-        artist: info.artist || info.uploader || info.channel || 'Unknown Artist',
+        artist: info.artist || info.uploader || 'Unknown Artist',
         album: info.album || 'YouTube Music',
-        thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length > 0 ? info.thumbnails[0].url : ''),
+        thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails[0] ? info.thumbnails[0].url : ''),
         duration: info.duration || 0,
-        uploader: info.uploader || info.channel || 'Unknown',
+        uploader: info.uploader || 'Unknown',
         channel: info.channel || info.uploader || 'Unknown',
         view_count: info.view_count || 0
       };
 
-      console.log(`📋 Metadata extracted: ${metadata.title} - ${metadata.artist}`);
+      console.log(`📋 Metadata: ${metadata.title} - ${metadata.artist}`);
 
-      // 5. ✅ STEP 2: Download audio and convert to MP3
-      // ✅ FIX: Use direct output path to avoid extension template issues
-      console.log(`⬇️ Downloading audio file...`);
-      
+      // 3. Download audio to temp
       await youtubedl(`https://www.youtube.com/watch?v=${videoId}`, {
         extractAudio: true,
         audioFormat: 'mp3',
         audioQuality: '9',
-        output: outputPath, // ✅ CHANGED: Direct path instead of template
+        output: tempPath,
         noCheckCertificates: true,
         noWarnings: true,
         preferFreeFormats: true,
         addHeader: ['referer:youtube.com', 'user-agent:googlebot']
       });
 
-      console.log(`✅ Download completed, verifying file...`);
-
-      // 6. ✅ IMPROVED: Wait and verify file with retry (handles conversion delay)
-      let fileExists = false;
+      // 4. Wait for file to be ready
+      let fileReady = false;
       let attempts = 0;
-      const maxAttempts = 10; // Increased from 5 to 10 for slower systems
-      const retryDelay = 500; // 500ms between checks
-
-      while (!fileExists && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
-        fileExists = await this.fileExists(outputPath);
-        attempts++;
-        
-        if (!fileExists && attempts < maxAttempts) {
-          console.log(`⏳ Waiting for file conversion... (attempt ${attempts}/${maxAttempts})`);
+      while (!fileReady && attempts < 10) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+          await fs.access(tempPath);
+          fileReady = true;
+        } catch {
+          attempts++;
         }
       }
 
-      if (!fileExists) {
-        // List directory to see what was actually created
-        const files = await fs.readdir(this.audioDir);
-        const matchingFiles = files.filter(f => f.startsWith(videoId));
-        
-        console.error(`❌ Expected file not found: ${outputPath}`);
-        console.error(`📁 Files found starting with ${videoId}:`, matchingFiles);
-        
-        // ✅ NEW: Try to find and rename if wrong extension
-        if (matchingFiles.length > 0) {
-          const wrongFile = matchingFiles[0];
-          const wrongPath = path.join(this.audioDir, wrongFile);
-          
-          console.log(`🔄 Found ${wrongFile}, attempting to rename to ${outputFilename}`);
-          
-          try {
-            await fs.rename(wrongPath, outputPath);
-            console.log(`✅ Successfully renamed to ${outputFilename}`);
-            fileExists = true;
-          } catch (renameErr) {
-            console.error(`❌ Rename failed:`, renameErr.message);
-            throw new Error(`Download completed but file has wrong extension: ${wrongFile}`);
-          }
-        } else {
-          throw new Error(`Download completed but file not found. Found: ${matchingFiles.join(', ')}`);
-        }
+      if (!fileReady) {
+        throw new Error('Download completed but file not accessible');
       }
 
-      // 7. Update Database local status
-      const stats = await fs.stat(outputPath);
+      console.log(`⬆️ Uploading to B2: ${filename}`);
+
+      // 5. Upload to B2
+      await uploadFile(tempPath, filename, 'audio/mpeg');
+
+      // 6. Get file size
+      const stats = await fs.stat(tempPath);
       const fileSizeMB = parseFloat((stats.size / (1024 * 1024)).toFixed(2));
-      
-      await Track.updateLocalStatus(videoId, outputPath, fileSizeMB);
 
-      // 8. Cleanup old files if needed
-      await this.cleanupOldFiles();
+      // 7. Update database
+      await Track.save({
+        videoId,
+        title: metadata.title,
+        artist: metadata.artist,
+        album: metadata.album,
+        coverUrl: metadata.thumbnail,
+        duration: metadata.duration,
+        channelTitle: metadata.uploader,
+        viewCount: metadata.view_count
+      });
 
-      console.log(`✅ Download complete: ${videoId} (${fileSizeMB} MB)`);
+      // 8. Clean up temp file
+      try {
+        await fs.unlink(tempPath);
+      } catch (err) {
+        console.warn('Could not delete temp file:', err.message);
+      }
+
+      console.log(`✅ Upload complete: ${videoId} (${fileSizeMB} MB)`);
+
+      // 9. Return stream URL from B2
+      const streamUrl = await getStreamUrl(filename);
 
       return {
         videoId,
-        filePath: outputPath,
-        url: `/audio/${outputFilename}`,
+        streamUrl,
         cached: false,
         metadata
       };
 
     } catch (error) {
-      console.error(`❌ Download failed for ${videoId}:`, error.message);
+      console.error(`❌ Download/upload failed for ${videoId}:`, error.message);
       
-      // Cleanup partial download if it exists
+      // Cleanup temp file
       try {
-        await fs.unlink(outputPath).catch(() => {});
+        await fs.unlink(tempPath).catch(() => {});
       } catch {}
       
       throw error;
@@ -189,8 +161,7 @@ class AudioService {
   }
 
   /**
-   * Get metadata for a video without downloading
-   * (Only used as fallback now)
+   * Get metadata without downloading
    */
   async getMetadata(videoId) {
     try {
@@ -203,11 +174,11 @@ class AudioService {
 
       return {
         title: info.title || 'Unknown Title',
-        artist: info.artist || info.uploader || info.channel || 'Unknown Artist',
+        artist: info.artist || info.uploader || 'Unknown Artist',
         album: info.album || 'YouTube Music',
-        thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails.length > 0 ? info.thumbnails[0].url : ''),
+        thumbnail: info.thumbnail || (info.thumbnails && info.thumbnails[0] ? info.thumbnails[0].url : ''),
         duration: info.duration || 0,
-        uploader: info.uploader || info.channel || 'Unknown',
+        uploader: info.uploader || 'Unknown',
         channel: info.channel || info.uploader || 'Unknown',
         view_count: info.view_count || 0
       };
@@ -215,102 +186,6 @@ class AudioService {
       console.error(`⚠️ Failed to fetch metadata for ${videoId}:`, error.message);
       return null;
     }
-  }
-
-  /**
-   * Check if file exists on disk
-   */
-  async fileExists(filePath) {
-    try {
-      await fs.access(filePath);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Get total storage usage in MB
-   */
-  async getStorageUsage() {
-    try {
-      const files = await fs.readdir(this.audioDir);
-      let totalSize = 0;
-      for (const file of files) {
-        const stats = await fs.stat(path.join(this.audioDir, file));
-        totalSize += stats.size / (1024 * 1024);
-      }
-      return totalSize;
-    } catch {
-      return 0;
-    }
-  }
-
-  /**
-   * Clean up old files when cache size exceeds limit
-   */
-  async cleanupOldFiles() {
-    try {
-      const totalSize = await this.getStorageUsage();
-      if (totalSize > this.maxCacheSizeMB) {
-        console.log(`🧹 Cache size (${totalSize.toFixed(2)} MB) exceeds limit (${this.maxCacheSizeMB} MB), cleaning up...`);
-        
-        const files = await fs.readdir(this.audioDir);
-        const fileStats = [];
-
-        for (const file of files) {
-          const filePath = path.join(this.audioDir, file);
-          const stats = await fs.stat(filePath);
-          fileStats.push({ name: file, path: filePath, atime: stats.atime });
-        }
-
-        // Sort by access time (oldest first)
-        fileStats.sort((a, b) => a.atime - b.atime);
-
-        // Delete oldest 20%
-        const deleteCount = Math.ceil(fileStats.length * 0.2);
-        for (let i = 0; i < deleteCount; i++) {
-          await fs.unlink(fileStats[i].path);
-          console.log(`🗑️ Deleted old file: ${fileStats[i].name}`);
-          
-          // Mark as not downloaded in DB
-          const vId = fileStats[i].name.replace('.mp3', '');
-          await Track.updateLocalStatus(vId, null, 0);
-        }
-        
-        console.log(`🧹 Cleanup: Deleted ${deleteCount} old files`);
-      }
-    } catch (error) {
-      console.error('❌ Cleanup error:', error);
-    }
-  }
-
-  /**
-   * Delete a specific audio file
-   */
-  async deleteAudio(videoId) {
-    const filePath = path.join(this.audioDir, `${videoId}.mp3`);
-    try {
-      await fs.unlink(filePath);
-      console.log(`🗑️ Deleted: ${videoId}.mp3`);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Get storage statistics
-   */
-  async getStorageStats() {
-    const files = await fs.readdir(this.audioDir);
-    const totalSize = await this.getStorageUsage();
-    return {
-      totalFiles: files.length,
-      totalSizeMB: parseFloat(totalSize.toFixed(2)),
-      maxSizeMB: this.maxCacheSizeMB,
-      usagePercent: parseFloat(((totalSize / this.maxCacheSizeMB) * 100).toFixed(2))
-    };
   }
 }
 

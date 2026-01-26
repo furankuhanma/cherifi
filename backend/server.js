@@ -16,12 +16,39 @@ const searchRoutes = require('./audio_cache/routes/search');
 const streamRoutes = require('./routes/stream');
 const aiRoutes = require('./routes/ai');
 const playlistRoutes = require('./routes/playlist');
-const authRoutes = require('./routes/auth'); // ✅ NEW: Auth routes
+const authRoutes = require('./routes/auth');
 const historyRoutes = require('./routes/history');
 
+// ✅ UPDATED: Dynamic CORS for production
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.FRONTEND_URL, // Will be your Vercel URL
+];
 
-// Middleware
-app.use(cors());
+// Add any Vercel preview deployments
+if (process.env.NODE_ENV === 'production') {
+  allowedOrigins.push(/\.vercel\.app$/); // Allow all *.vercel.app domains
+}
+
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.some(allowed => {
+      if (typeof allowed === 'string') return allowed === origin;
+      if (allowed instanceof RegExp) return allowed.test(origin);
+      return false;
+    })) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 
 // Request logging middleware
@@ -33,16 +60,17 @@ app.use((req, res, next) => {
 
 app.use('/api/tracks', trackRoutes);
 
-// Serve static audio files from storage directory
-const audioDir = process.env.AUDIO_STORAGE_DIR || '/home/frank-loui-lapore/vibestream/audio';
-app.use('/audio', express.static(audioDir));
+// ✅ UPDATED: Remove local audio serving for cloud storage
+// const audioDir = process.env.AUDIO_STORAGE_DIR || '/home/frank-loui-lapore/vibestream/audio';
+// app.use('/audio', express.static(audioDir));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    message: 'VibeStream Backend is running',
-    timestamp: new Date().toISOString()
+    message: 'CheriFI Backend is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -51,6 +79,7 @@ app.get('/api/config/test', async (req, res) => {
   const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
   const hasYouTubeKey = !!process.env.YOUTUBE_API_KEY;
   const hasDBConfig = !!(process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME);
+  const hasB2Config = !!(process.env.B2_KEY_ID && process.env.B2_APP_KEY && process.env.B2_BUCKET_NAME);
 
   // Test database connection
   let dbConnected = false;
@@ -67,7 +96,8 @@ app.get('/api/config/test', async (req, res) => {
     youtube_configured: hasYouTubeKey,
     database_configured: hasDBConfig,
     database_connected: dbConnected,
-    message: hasOpenAIKey && hasYouTubeKey && dbConnected
+    b2_storage_configured: hasB2Config, // ✅ NEW
+    message: hasOpenAIKey && hasYouTubeKey && dbConnected && hasB2Config
       ? 'All services configured and connected ✅'
       : 'Some services missing or disconnected ❌'
   });
@@ -92,36 +122,18 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // API Routes
-app.use('/api/auth', authRoutes);           // ✅ NEW: Authentication endpoints
+app.use('/api/auth', authRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/stream', streamRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/playlists', playlistRoutes);
 app.use('/api/history', historyRoutes);
 
-// 404 handler for undefined routes
+// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     error: 'Not found',
-    message: `Route ${req.method} ${req.path} not found`,
-    availableRoutes: [
-      'GET /api/health',
-      'GET /api/config/test',
-      'GET /api/stats',
-      'POST /api/auth/register',      // ✅ NEW
-      'POST /api/auth/login',          // ✅ NEW
-      'POST /api/auth/logout',         // ✅ NEW
-      'GET /api/auth/me',              // ✅ NEW
-      'GET /api/search?q=query',
-      'GET /api/search/trending',
-      'GET /api/stream/:videoId',
-      'POST /api/ai/chat',
-      'POST /api/ai/mood',
-      'POST /api/ai/recommend',
-      'GET /api/playlists',
-      'POST /api/playlists',
-      'GET /api/playlists/:id'
-    ]
+    message: `Route ${req.method} ${req.path} not found`
   });
 });
 
@@ -130,33 +142,28 @@ app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(500).json({
     error: 'Internal server error',
-    message: err.message
+    message: process.env.NODE_ENV === 'production' ? 'An error occurred' : err.message
   });
 });
 
-// ✅ NEW: Initialize database with users table
+// Initialize database
 async function initializeDatabase() {
   try {
-    // Ensure database exists
     console.log('🔌 Initializing database...');
     await database.ensureDatabase();
-
-    // Connect to database
     await database.connect();
-
-    // Initialize existing tables
     await database.initializeTables();
 
-    // ✅ NEW: Update tracks table for Hybrid Storage
-    console.log('🎵 Updating tracks table for hybrid storage...');
+    // Update tracks table for cloud storage
+    console.log('🎵 Updating tracks table for cloud storage...');
     try {
       await database.query(`
-    ALTER TABLE tracks 
-    ADD COLUMN local_path VARCHAR(255) DEFAULT NULL,
-    ADD COLUMN is_downloaded BOOLEAN DEFAULT 0,
-    ADD COLUMN file_size_mb FLOAT DEFAULT 0,
-    ADD COLUMN mime_type VARCHAR(50) DEFAULT 'audio/mpeg'
-  `);
+        ALTER TABLE tracks 
+        ADD COLUMN IF NOT EXISTS b2_key VARCHAR(255) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS is_cloud_stored BOOLEAN DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS file_size_mb FLOAT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS mime_type VARCHAR(50) DEFAULT 'audio/mpeg'
+      `);
       console.log('✅ Tracks table updated');
     } catch (error) {
       if (!error.message.includes('Duplicate column name')) {
@@ -164,19 +171,19 @@ async function initializeDatabase() {
       }
     }
 
-    // ✅ NEW: Create liked_tracks junction table
+    // Create other tables...
     console.log('❤️ Creating liked_tracks table...');
     await database.query(`
-  CREATE TABLE IF NOT EXISTS liked_tracks (
-    user_id INT NOT NULL,
-    track_id INT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, track_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-`);
-    // ✅ NEW: Create users table
+      CREATE TABLE IF NOT EXISTS liked_tracks (
+        user_id INT NOT NULL,
+        track_id INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, track_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     console.log('👤 Creating users table...');
     await database.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -192,7 +199,6 @@ async function initializeDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // ✅ NEW: Update playlists table to link with users (if column doesn't exist)
     console.log('🔗 Updating playlists table...');
     try {
       await database.query(`
@@ -201,53 +207,30 @@ async function initializeDatabase() {
         ADD INDEX idx_user_playlists (user_id),
         ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       `);
-      console.log('✅ Playlists table updated with user_id');
     } catch (error) {
-      // Column might already exist, ignore error
       if (!error.message.includes('Duplicate column name')) {
         console.warn('⚠️ Could not add user_id to playlists:', error.message);
       }
     }
 
+    console.log('✅ Database initialized successfully');
   } catch (error) {
     console.error('❌ Failed to initialize database:', error.message);
     throw error;
   }
 }
 
-// Initialize database and start server
+// Start server
 async function startServer() {
   try {
     await initializeDatabase();
 
-    // Start server
-    app.listen(PORT, () => {
-      console.log('\n🎵 VibeStream Backend Server Started');
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log('\n🎵 CheriFI Backend Server Started');
       console.log('=====================================');
-      console.log(`🌐 Server running on: http://localhost:${PORT}`);
-      console.log(`📋 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`🔑 Config test: http://localhost:${PORT}/api/config/test`);
-      console.log(`📊 Statistics: http://localhost:${PORT}/api/stats`);
-      console.log('=====================================\n');
-      console.log('Available API Endpoints:');
-      console.log('  🔐 Authentication:');
-      console.log('    - POST /api/auth/register');
-      console.log('    - POST /api/auth/login');
-      console.log('    - POST /api/auth/logout');
-      console.log('    - GET  /api/auth/me');
-      console.log('  🔍 Search:');
-      console.log('    - GET  /api/search?q=query');
-      console.log('    - GET  /api/search/trending');
-      console.log('  🎵 Music:');
-      console.log('    - GET  /api/stream/:videoId');
-      console.log('    - GET  /api/tracks/liked'); // Added this
-      console.log('    - POST /api/tracks/like');  // Added this
-      console.log('  🤖 AI:');
-      console.log('    - POST /api/ai/chat');
-      console.log('    - POST /api/ai/recommend');
-      console.log('  📋 Playlists:');
-      console.log('    - GET  /api/playlists');
-      console.log('    - POST /api/playlists');
+      console.log(`🌐 Server running on port: ${PORT}`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`📋 Health check: /api/health`);
       console.log('=====================================\n');
     });
 
@@ -257,7 +240,7 @@ async function startServer() {
   }
 }
 
-// Handle graceful shutdown
+// Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
   await database.close();
@@ -270,5 +253,4 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-// Start the server
 startServer();
