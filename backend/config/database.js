@@ -1,14 +1,17 @@
 const mysql = require('mysql2/promise');
+const dotenv = require('dotenv');
+
+dotenv.config();
 
 class Database {
   constructor() {
     this.pool = null;
     this.config = {
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT) || 3306,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || 'Fr4nk@0920!905A72#',
-      database: process.env.DB_NAME || 'vibestream',
+      host: process.env.DB_HOST,
+      port: parseInt(process.env.DB_PORT),
+      user: process.env.DB_USER ,
+      password: process.env.DB_PASSWORD ,
+      database: process.env.DB_NAME,
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
@@ -17,10 +20,13 @@ class Database {
     };
   }
 
+  
+
   /**
    * Initialize database connection pool
    */
   async connect() {
+
     try {
       if (this.pool) {
         console.log('✅ Database pool already exists');

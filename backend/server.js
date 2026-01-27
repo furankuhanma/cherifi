@@ -22,6 +22,7 @@ const historyRoutes = require('./routes/history');
 // ✅ UPDATED: Dynamic CORS for production
 const allowedOrigins = [
   'http://localhost:5173',
+  'http://100.84.3.61:3000',
   'http://localhost:3000',
   process.env.FRONTEND_URL, // Will be your Vercel URL
 ];
